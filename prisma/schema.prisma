@@ -1,0 +1,238 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+//  NextAuth Required Models
+// ─────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────────
+//  Core ERP Models
+// ─────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  CASHIER
+  MANAGER
+}
+
+model User {
+  id            String    @id @default(uuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          Role      @default(CASHIER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  bills    Bill[]
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String?
+  email     String?  @unique
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bills    Bill[]
+  payments Payment[]
+  cheques  Cheque[]
+}
+
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String?
+  email     String?  @unique
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+}
+
+model Item {
+  id             String   @id @default(uuid())
+  barcode        String   @unique
+  name           String
+  description    String?
+  category       String?
+  unit           String   @default("pcs")
+  stockQty       Int      @default(0)
+  reorderLevel   Int      @default(5)
+  buyingPrice    Decimal  @db.Decimal(12, 2)
+  sellingPrice   Decimal  @db.Decimal(12, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  billItems     BillItem[]
+  purchaseItems PurchaseItem[]
+}
+
+model Bill {
+  id           String   @id @default(uuid())
+  billNumber   String   @unique
+  customerId   String?
+  userId       String
+  status       String   @default("PENDING") // PENDING | PAID | PARTIAL | CANCELLED
+  subtotal     Decimal  @db.Decimal(12, 2)
+  discount     Decimal  @default(0) @db.Decimal(12, 2)
+  tax          Decimal  @default(0) @db.Decimal(12, 2)
+  totalAmount  Decimal  @db.Decimal(12, 2)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer  Customer?  @relation(fields: [customerId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  billItems BillItem[]
+  payments  Payment[]
+  cheques   Cheque[]
+}
+
+model BillItem {
+  id          String  @id @default(uuid())
+  billId      String
+  itemId      String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  totalPrice  Decimal @db.Decimal(12, 2)
+
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id])
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  CHEQUE
+  BANK_TRANSFER
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  billId        String
+  customerId    String?
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod @default(CASH)
+  reference     String?
+  paidAt        DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+
+  bill     Bill      @relation(fields: [billId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id])
+}
+
+enum ChequeStatus {
+  PENDING
+  CLEARED
+  BOUNCED
+  CANCELLED
+}
+
+model Cheque {
+  id             String       @id @default(uuid())
+  billId         String
+  customerId     String?
+  chequeNumber   String
+  bank           String
+  amount         Decimal      @db.Decimal(12, 2)
+  chequeDate     DateTime
+  depositDate    DateTime?
+  status         ChequeStatus @default(PENDING)
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  bill     Bill      @relation(fields: [billId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id])
+}
+
+enum OrderStatus {
+  DRAFT
+  ORDERED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id           String      @id @default(uuid())
+  orderNumber  String      @unique
+  supplierId   String
+  status       OrderStatus @default(DRAFT)
+  totalAmount  Decimal     @db.Decimal(12, 2)
+  notes        String?
+  orderedAt    DateTime?
+  receivedAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  purchaseItems PurchaseItem[]
+}
+
+model PurchaseItem {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  itemId          String
+  quantity        Int
+  unitCost        Decimal @db.Decimal(12, 2)
+  totalCost       Decimal @db.Decimal(12, 2)
+  receivedQty     Int     @default(0)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  item          Item          @relation(fields: [itemId], references: [id])
+}
