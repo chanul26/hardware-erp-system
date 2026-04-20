@@ -9,7 +9,6 @@ import {
   CreditCard,
   BarChart3,
   Settings,
-  LogOut,
   Hammer,
   Shield,
 } from "lucide-react";

@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 
 export default withAuth(
   function middleware(req) {
-    const token = req.nextauth.token;
+    // Cast token to 'any' to bypass strict TS checking for our custom role property
+    const token = req.nextauth.token as any;
     const role = token?.role;
     const path = req.nextUrl.pathname;
 

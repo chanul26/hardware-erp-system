@@ -37,4 +37,5 @@ jobs:
         env:
           DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
           NEXTAUTH_SECRET: "ci-testing-secret-key-12345"
+          NEXTAUTH_URL: "http://localhost:3001"
         run: npm run build
