@@ -11,7 +11,9 @@ import {
   Settings,
   LogOut,
   Hammer,
+  Shield,
 } from "lucide-react";
+import { LogoutButton } from "@/components/auth/logout-button";
 
 const navItems = [
   {
@@ -53,6 +55,11 @@ const navItems = [
     label: "Reports",
     href: "/reports",
     icon: BarChart3,
+  },
+  {
+    label: "Staff Management",
+    href: "/users",
+    icon: Shield,
   },
 ];
 
@@ -109,10 +116,7 @@ export default function DashboardLayout({
             <Settings className="h-4 w-4" />
             Settings
           </Link>
-          <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
-            <LogOut className="h-4 w-4" />
-            Sign Out
-          </button>
+          <LogoutButton />
         </div>
       </aside>
 
