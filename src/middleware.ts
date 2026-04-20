@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 export default withAuth(
   function middleware(req) {
-    const token = req.nextauth.token as any;
+    const token = req.nextauth.token;
     const role = token?.role;
     const path = req.nextUrl.pathname;
 

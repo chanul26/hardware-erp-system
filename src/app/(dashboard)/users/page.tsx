@@ -3,11 +3,18 @@
 import { useState, useEffect } from "react";
 import { Users, Plus, Shield } from "lucide-react";
 
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  createdAt?: string;
+}
+
 export default function UsersPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form State
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -15,7 +22,6 @@ export default function UsersPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
-  // Fetch the list of workers when the page loads
   useEffect(() => {
     fetchUsers();
   }, []);
@@ -26,7 +32,7 @@ export default function UsersPage() {
       const data = await res.json();
       if (data.success) setUsers(data.data);
     } catch (error) {
-      console.error("Failed to fetch users");
+      console.error("Failed to fetch users", error);
     } finally {
       setLoading(false);
     }
@@ -50,15 +56,14 @@ export default function UsersPage() {
         setMessage(data.error || "Failed to create user");
       } else {
         setMessage("User created successfully!");
-        // Reset form
         setName("");
         setEmail("");
         setPassword("");
         setRole("CASHIER");
-        // Refresh the list
         fetchUsers();
       }
     } catch (error) {
+      console.error("Failed to create user", error);
       setMessage("An unexpected error occurred.");
     } finally {
       setIsSubmitting(false);
@@ -77,7 +82,6 @@ export default function UsersPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Create User Form */}
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm h-fit">
           <div className="flex items-center gap-2 mb-4">
             <Plus className="h-5 w-5 text-primary" />
@@ -117,7 +121,6 @@ export default function UsersPage() {
           </form>
         </div>
 
-        {/* User List */}
         <div className="lg:col-span-2 rounded-xl border border-border bg-card p-6 shadow-sm">
            <div className="flex items-center gap-2 mb-4">
             <Users className="h-5 w-5 text-primary" />
