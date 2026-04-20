@@ -1,16 +1,13 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import AuthProvider from "@/components/providers/session-provider";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: {
-    default: "Hardware ERP System",
-    template: "%s | Hardware ERP",
-  },
-  description:
-    "Enterprise Resource Planning system for hardware shop management — inventory, billing, suppliers, and reports.",
+  title: "Hardware ERP System",
+  description: "Enterprise Resource Planning system for hardware shop management.",
 };
 
 export default function RootLayout({
@@ -20,7 +17,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }
