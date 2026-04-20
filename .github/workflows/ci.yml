@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main", "dev" ]
 
+# Silence the Node.js 20 deprecation warning from GitHub Actions
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -17,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24' 
           cache: 'npm'
 
       - name: Install Dependencies
@@ -33,7 +37,6 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Build Next.js App
-        # Dummy env variables just to pass the Next.js build validation
         env:
           DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
           NEXTAUTH_SECRET: "ci-testing-secret-key-12345"
