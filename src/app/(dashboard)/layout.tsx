@@ -15,51 +15,15 @@ import {
 import { LogoutButton } from "@/components/auth/logout-button";
 
 const navItems = [
-  {
-    label: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-  },
-  {
-    label: "Inventory",
-    href: "/inventory",
-    icon: Package,
-  },
-  {
-    label: "Billing",
-    href: "/billing",
-    icon: Receipt,
-  },
-  {
-    label: "Customers",
-    href: "/customers",
-    icon: Users,
-  },
-  {
-    label: "Suppliers",
-    href: "/suppliers",
-    icon: Truck,
-  },
-  {
-    label: "Purchase Orders",
-    href: "/purchase-orders",
-    icon: ShoppingCart,
-  },
-  {
-    label: "Payments",
-    href: "/payments",
-    icon: CreditCard,
-  },
-  {
-    label: "Reports",
-    href: "/reports",
-    icon: BarChart3,
-  },
-  {
-    label: "Staff Management",
-    href: "/users",
-    icon: Shield,
-  },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Inventory", href: "/inventory", icon: Package },
+  { label: "Billing", href: "/billing", icon: Receipt },
+  { label: "Customers", href: "/customers", icon: Users },
+  { label: "Suppliers", href: "/suppliers", icon: Truck },
+  { label: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart },
+  { label: "Payments", href: "/payments", icon: CreditCard },
+  { label: "Reports", href: "/reports", icon: BarChart3 },
+  { label: "Staff Management", href: "/users", icon: Shield },
 ];
 
 export default function DashboardLayout({
@@ -69,8 +33,8 @@ export default function DashboardLayout({
 }) {
   return (
     <div className="flex min-h-screen bg-background">
-      {/* ── Sidebar ── */}
-      <aside className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card shadow-sm">
+      {/* ── Sidebar (Hidden on Print) ── */}
+      <aside className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card shadow-sm print:hidden">
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 border-b border-border px-6">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
@@ -119,10 +83,10 @@ export default function DashboardLayout({
         </div>
       </aside>
 
-      {/* ── Main content ── */}
-      <div className="flex flex-1 flex-col pl-64">
-        {/* Top bar */}
-        <header className="sticky top-0 z-40 flex h-16 items-center border-b border-border bg-background/95 backdrop-blur px-6">
+      {/* ── Main content (Padding removed on Print) ── */}
+      <div className="flex flex-1 flex-col pl-64 print:pl-0">
+        {/* Top bar (Hidden on Print) */}
+        <header className="sticky top-0 z-40 flex h-16 items-center border-b border-border bg-background/95 backdrop-blur px-6 print:hidden">
           <h1 className="text-lg font-semibold text-foreground">
             Hardware ERP
           </h1>
@@ -133,8 +97,8 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 p-6">{children}</main>
+        {/* Page content (Padding removed on Print) */}
+        <main className="flex-1 p-6 print:p-0 bg-white">{children}</main>
       </div>
     </div>
   );
