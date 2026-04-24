@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main", "dev" ]
 
-# Silence the Node.js 20 deprecation warning from GitHub Actions
+# Silence the Node.js 20 deprecation warning
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
