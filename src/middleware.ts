@@ -7,10 +7,15 @@ export default withAuth(
     const role = token?.role;
     const path = req.nextUrl.pathname;
 
-    // 1. If already logged in and trying to access the root login page:
+    // 1. If trying to access the root login page:
     if (path === "/") {
-      if (role === "ADMIN") return NextResponse.redirect(new URL("/dashboard", req.url));
-      return NextResponse.redirect(new URL("/billing", req.url));
+      // ONLY redirect if they are actually logged in
+      if (token) {
+        if (role === "ADMIN") return NextResponse.redirect(new URL("/dashboard", req.url));
+        return NextResponse.redirect(new URL("/billing", req.url));
+      }
+      // If no token, let them stay on the login page
+      return NextResponse.next();
     }
 
     // 2. Protect Admin-Only Routes

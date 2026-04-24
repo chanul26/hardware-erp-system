@@ -6,10 +6,8 @@ import bcrypt from "bcryptjs";
 
 export async function POST(request: Request) {
   try {
-    // 1. Verify the user making the request is logged in
     const session = await getServerSession(authOptions);
     
-    // @ts-expect-error - role exists on our custom session
     if (!session || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
@@ -17,12 +15,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, email, password, role } = body;
 
-    // 2. Validate input
     if (!email || !password || !name || !role) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // 3. Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email },
     });
@@ -31,7 +27,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Email already in use" }, { status: 400 });
     }
 
-    // 4. Hash the password and create the worker
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await prisma.user.create({
@@ -39,7 +34,7 @@ export async function POST(request: Request) {
         name,
         email,
         password: hashedPassword,
-        role, // 'CASHIER' or 'MANAGER'
+        role,
       },
       select: {
         id: true,
@@ -58,12 +53,10 @@ export async function POST(request: Request) {
   }
 }
 
-// GET all users (For the Admin to see the list of workers)
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     
-    // @ts-expect-error
     if (!session || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
