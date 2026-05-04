@@ -7,21 +7,27 @@ export default withAuth(
     const role = token?.role;
     const path = req.nextUrl.pathname;
 
-    // 1. If trying to access the root login page:
+    // 1. Root Login Page Routing
     if (path === "/") {
-      // ONLY redirect if they are actually logged in
       if (token) {
         if (role === "ADMIN") return NextResponse.redirect(new URL("/dashboard", req.url));
-        return NextResponse.redirect(new URL("/billing", req.url));
+        if (role === "MANAGER") return NextResponse.redirect(new URL("/inventory", req.url));
+        return NextResponse.redirect(new URL("/billing", req.url)); // Cashiers
       }
-      // If no token, let them stay on the login page
       return NextResponse.next();
     }
 
-    // 2. Protect Admin-Only Routes
-    const isAdminRoute = path === "/dashboard" || path.startsWith("/users");
-    
+    // 2. Define Route Hierarchies
+    const isAdminRoute = path.startsWith("/dashboard") || path.startsWith("/users") || path.startsWith("/reports");
+    const isManagerRoute = path.startsWith("/inventory") || path.startsWith("/purchase-orders") || path.startsWith("/suppliers") || path.startsWith("/payments");
+
+    // 3. Admin-Only Interception
     if (isAdminRoute && role !== "ADMIN") {
+      return NextResponse.redirect(new URL("/billing", req.url));
+    }
+
+    // 4. Manager & Admin Interception (Blocks Cashiers)
+    if (isManagerRoute && role !== "ADMIN" && role !== "MANAGER") {
       return NextResponse.redirect(new URL("/billing", req.url));
     }
 
@@ -30,7 +36,6 @@ export default withAuth(
   {
     callbacks: {
       authorized: ({ req, token }) => {
-        // Always allow the root (login) page to render
         if (req.nextUrl.pathname === "/") return true;
         return !!token;
       },
@@ -38,6 +43,18 @@ export default withAuth(
   }
 );
 
+// We MUST tell the middleware to watch all these paths
 export const config = {
-  matcher: ["/dashboard/:path*", "/users/:path*", "/billing/:path*", "/"],
+  matcher: [
+    "/dashboard/:path*", 
+    "/users/:path*", 
+    "/reports/:path*", 
+    "/inventory/:path*", 
+    "/purchase-orders/:path*", 
+    "/suppliers/:path*", 
+    "/payments/:path*", 
+    "/customers/:path*", 
+    "/billing/:path*", 
+    "/"
+  ],
 };
