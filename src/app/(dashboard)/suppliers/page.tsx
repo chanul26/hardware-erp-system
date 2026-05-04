@@ -1,20 +1,28 @@
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import AddSupplierForm from "./AddSupplierForm";
-import { Truck } from "lucide-react";
+import { Truck, AlertCircle } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Suppliers",
   description: "Manage hardware suppliers and vendors.",
 };
 
-// RULE 1: This prevents CI/CD build crashes
 export const dynamic = "force-dynamic";
 
 export default async function SuppliersPage() {
-  const suppliers = await prisma.supplier.findMany({
-    orderBy: { createdAt: "desc" },
-  });
+  let suppliers: any[] = [];
+  let fetchError = false;
+
+  // Safe Database Fetching
+  try {
+    suppliers = await prisma.supplier.findMany({
+      orderBy: { createdAt: "desc" },
+    });
+  } catch (error) {
+    console.error("Failed to load suppliers from DB:", error);
+    fetchError = true;
+  }
 
   return (
     <div className="space-y-6">
@@ -44,7 +52,16 @@ export default async function SuppliersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {suppliers.length === 0 ? (
+              {fetchError ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-destructive">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle className="h-6 w-6" />
+                      <p>Failed to load data. Please check your database connection.</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : suppliers.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
                     No suppliers found. Register your first supplier above.
