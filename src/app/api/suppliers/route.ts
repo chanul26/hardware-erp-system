@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, phone, email, address } = body;
 
+    // Validation: Name is required
     if (!name) {
       return NextResponse.json(
         { success: false, error: "Supplier name is required" },
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
       );
     }
 
+    // Validation: Check if email already exists
     if (email) {
       const existing = await prisma.supplier.findUnique({ where: { email } });
       if (existing) {
@@ -37,6 +39,7 @@ export async function POST(request: Request) {
       }
     }
 
+    // Save to the Prisma database
     const newSupplier = await prisma.supplier.create({
       data: {
         name,
@@ -46,7 +49,11 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json({ success: true, data: newSupplier });
+    // Return the proper 201 Created status
+    return NextResponse.json(
+      { success: true, data: newSupplier }, 
+      { status: 201 }
+    );
   } catch (error: any) {
     return NextResponse.json(
       { success: false, error: error.message || "Failed to create supplier" },
