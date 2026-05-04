@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
 import {
   LayoutDashboard,
   Package,
@@ -14,7 +16,7 @@ import {
 } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
 
-const navItems = [
+const allNavItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Inventory", href: "/inventory", icon: Package },
   { label: "Billing", href: "/billing", icon: Receipt },
@@ -26,11 +28,32 @@ const navItems = [
   { label: "Staff Management", href: "/users", icon: Shield },
 ];
 
-export default function DashboardLayout({
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // 1. Securely fetch the session on the server
+  const session = await getServerSession(authOptions);
+  const role = session?.user?.role || "CASHIER";
+
+  // 2. Filter the navigation items based on the strict RBAC hierarchy
+  const navItems = allNavItems.filter((item) => {
+    if (role === "ADMIN") return true; // Uncle gets everything
+    
+    if (role === "MANAGER") {
+      // Managers get everything EXCEPT Dashboard, Reports, and Staff
+      return !["Dashboard", "Reports", "Staff Management"].includes(item.label);
+    }
+    
+    if (role === "CASHIER") {
+      // Cashiers ONLY get Billing and Customers
+      return ["Billing", "Customers"].includes(item.label);
+    }
+    
+    return false;
+  });
+
   return (
     <div className="flex min-h-screen bg-background">
       {/* ── Sidebar (Hidden on Print) ── */}
@@ -72,13 +95,15 @@ export default function DashboardLayout({
 
         {/* Bottom actions */}
         <div className="border-t border-border p-3 space-y-1">
-          <Link
-            href="/settings"
-            className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          >
-            <Settings className="h-4 w-4" />
-            Settings
-          </Link>
+          {role === "ADMIN" && (
+            <Link
+              href="/settings"
+              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <Settings className="h-4 w-4" />
+              Settings
+            </Link>
+          )}
           <LogoutButton />
         </div>
       </aside>
@@ -92,7 +117,7 @@ export default function DashboardLayout({
           </h1>
           <div className="ml-auto flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
-              A
+              {role.charAt(0)} {/* Shows 'A' for Admin, 'M' for Manager, 'C' for Cashier */}
             </div>
           </div>
         </header>
