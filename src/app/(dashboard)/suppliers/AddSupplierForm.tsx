@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, X } from "lucide-react";
 
 export default function AddSupplierForm() {
   const router = useRouter();
@@ -45,61 +45,123 @@ export default function AddSupplierForm() {
     }
   };
 
-  if (!isOpen) {
-    return (
+  return (
+    <>
+      {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition shadow-sm font-medium"
+        className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition shadow-sm font-medium text-sm"
       >
         <Plus className="h-4 w-4" />
         Add New Supplier
       </button>
-    );
-  }
 
-  return (
-    <div className="bg-card p-6 rounded-xl shadow-sm border border-border mb-8">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-bold text-foreground">Register New Supplier</h2>
-        <button 
-          onClick={() => setIsOpen(false)} 
-          className="text-sm font-medium text-muted-foreground hover:text-foreground"
-        >
-          Cancel
-        </button>
-      </div>
+      {/* Modal Overlay */}
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 sm:p-0 animate-in fade-in duration-200">
+          <div className="bg-background w-full max-w-2xl rounded-xl shadow-xl overflow-hidden border border-border animate-in zoom-in-95 duration-200">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-border">
+              <h2 className="text-lg font-semibold text-foreground tracking-tight">
+                Add New Supplier
+              </h2>
+              <button 
+                onClick={() => setIsOpen(false)} 
+                className="text-muted-foreground hover:text-foreground hover:bg-muted p-1.5 rounded-full transition-colors"
+                type="button"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
-      {error && (
-        <div className="mb-4 p-3 bg-destructive/15 text-destructive rounded-md text-sm font-medium">
-          {error}
+            {/* Form Content */}
+            <form onSubmit={handleSubmit}>
+              <div className="p-6 space-y-6">
+                
+                {/* Error Banner */}
+                {error && (
+                  <div className="p-3 bg-destructive/15 text-destructive rounded-md text-sm font-medium border border-destructive/20">
+                    {error}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Name Field */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none text-foreground">
+                      Supplier Name <span className="text-destructive">*</span>
+                    </label>
+                    <input 
+                      name="name" 
+                      required 
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:border-primary transition-colors disabled:opacity-50" 
+                      placeholder="e.g. BuildMart Wholesale" 
+                    />
+                  </div>
+
+                  {/* Phone Field */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none text-foreground">
+                      Phone Number
+                    </label>
+                    <input 
+                      name="phone" 
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:border-primary transition-colors disabled:opacity-50" 
+                      placeholder="e.g. 011-555-4321" 
+                    />
+                  </div>
+
+                  {/* Email Field */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none text-foreground">
+                      Email Address
+                    </label>
+                    <input 
+                      name="email" 
+                      type="email"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:border-primary transition-colors disabled:opacity-50" 
+                      placeholder="sales@buildmart.com" 
+                    />
+                  </div>
+
+                  {/* Address Field */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium leading-none text-foreground">
+                      Address
+                    </label>
+                    <input 
+                      name="address" 
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:border-primary transition-colors disabled:opacity-50" 
+                      placeholder="123 Industrial Estate, Colombo" 
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              {/* Footer Actions */}
+              <div className="flex items-center justify-end gap-3 p-6 border-t border-border bg-muted/10">
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
+                  className="h-10 px-4 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex items-center gap-2 h-10 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-70"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {loading ? "Saving..." : "Save Supplier"}
+                </button>
+              </div>
+            </form>
+
+          </div>
         </div>
       )}
-
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-muted-foreground">Supplier Name *</label>
-          <input name="name" required className="w-full border border-input bg-background p-2 rounded-md mt-1 focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. BuildMart Wholesale" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-muted-foreground">Phone Number</label>
-          <input name="phone" className="w-full border border-input bg-background p-2 rounded-md mt-1 focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. 011-555-4321" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-muted-foreground">Email Address</label>
-          <input name="email" type="email" className="w-full border border-input bg-background p-2 rounded-md mt-1 focus:ring-2 focus:ring-primary outline-none" placeholder="sales@buildmart.com" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-muted-foreground">Address</label>
-          <input name="address" className="w-full border border-input bg-background p-2 rounded-md mt-1 focus:ring-2 focus:ring-primary outline-none" placeholder="123 Industrial Estate, Colombo" />
-        </div>
-        
-        <div className="md:col-span-2 flex justify-end mt-2">
-          <button type="submit" disabled={loading} className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md hover:bg-primary/90 transition font-medium disabled:opacity-70">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {loading ? "Saving..." : "Save Supplier"}
-          </button>
-        </div>
-      </form>
-    </div>
+    </>
   );
 }
