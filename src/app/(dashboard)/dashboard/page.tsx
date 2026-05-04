@@ -1,217 +1,104 @@
-import type { Metadata } from "next";
-import { prisma } from "@/lib/prisma";
-import {
-  Package,
-  Users,
-  Truck,
-  DollarSign,
-  TrendingUp,
-  AlertTriangle,
-  ShoppingCart,
-  CreditCard,
-} from "lucide-react";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Dashboard",
-  description: "Hardware ERP system overview — sales, inventory, and key metrics.",
-};
+import { useEffect, useState } from "react";
+import { Package, AlertTriangle, DollarSign, TrendingDown, Users, CreditCard } from "lucide-react";
 
-// Make sure Next.js doesn't cache this page forever. We want live data.
-export const dynamic = "force-dynamic";
+export default function DashboardPage() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-interface KpiCardProps {
-  title: string;
-  value: string | number;
-  subtitle: string;
-  icon: React.ElementType;
-  trend?: string;
-  trendUp?: boolean;
-}
+  useEffect(() => {
+    fetch("/api/reports")
+      .then(res => res.json())
+      .then(json => {
+        if (json.success) setData(json.data);
+        setLoading(false);
+      });
+  }, []);
 
-function KpiCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  trend,
-  trendUp,
-}: KpiCardProps) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-shadow hover:shadow-md">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-muted-foreground">{title}</p>
-          <p className="text-2xl font-bold text-foreground">{value}</p>
-          <p className="text-xs text-muted-foreground">{subtitle}</p>
-        </div>
-        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10">
-          <Icon className="h-5 w-5 text-primary" />
-        </div>
-      </div>
-      {trend && (
-        <div className="mt-4 flex items-center gap-1">
-          <TrendingUp
-            className={`h-3.5 w-3.5 ${trendUp ? "text-green-500" : "text-destructive rotate-180"}`}
-          />
-          <span
-            className={`text-xs font-medium ${trendUp ? "text-green-600" : "text-destructive"}`}
-          >
-            {trend}
-          </span>
-          <span className="text-xs text-muted-foreground">vs last month</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default async function DashboardPage() {
-  // Execute all database queries concurrently for maximum performance
-  const [
-    revenueResult,
-    itemCount,
-    customerCount,
-    supplierCount,
-    lowStockCount,
-    pendingBillsCount,
-    recentBills
-  ] = await Promise.all([
-    prisma.bill.aggregate({
-      _sum: { totalAmount: true },
-      where: { status: "PAID" }, // Only count actual collected money
-    }),
-    prisma.item.count(),
-    prisma.customer.count(),
-    prisma.supplier.count(),
-    prisma.item.count({
-      where: { stockQty: { lte: 5 } }, // Alert on anything with 5 or less units
-    }),
-    prisma.bill.count({
-      where: { status: "PENDING" }, // Bills that haven't been paid
-    }),
-    prisma.bill.findMany({
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: { customer: true }, // Join the customer table to get their name
-    })
-  ]);
-
-  // Format the revenue safely
-  const totalRevenue = revenueResult._sum.totalAmount 
-    ? Number(revenueResult._sum.totalAmount) 
-    : 0;
-
-  const kpiData: KpiCardProps[] = [
-    {
-      title: "Total Revenue",
-      value: `Rs. ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-      subtitle: "All-time paid invoices",
-      icon: DollarSign,
-      trend: "+12.5%",
-      trendUp: true,
-    },
-    {
-      title: "Inventory Items",
-      value: itemCount,
-      subtitle: "Total SKUs in stock",
-      icon: Package,
-      trend: "+4",
-      trendUp: true,
-    },
-    {
-      title: "Total Customers",
-      value: customerCount,
-      subtitle: "Registered customers",
-      icon: Users,
-    },
-    {
-      title: "Active Suppliers",
-      value: supplierCount,
-      subtitle: "Registered suppliers",
-      icon: Truck,
-    },
-    {
-      title: "Open Bills",
-      value: pendingBillsCount,
-      subtitle: "Pending / partially paid",
-      icon: ShoppingCart,
-    },
-    {
-      title: "Low Stock Alerts",
-      value: lowStockCount,
-      subtitle: "Items at or below 5 units",
-      icon: AlertTriangle,
-    }
-  ];
+  if (loading) {
+    return <div className="p-6 flex justify-center text-gray-500">Loading Business Analytics...</div>;
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight text-foreground">
-          Dashboard
-        </h2>
-        <p className="text-muted-foreground mt-1">
-          Welcome back — here&apos;s your live business overview.
-        </p>
+        <h1 className="text-3xl font-bold text-gray-900">Business Overview</h1>
+        <p className="text-gray-500 mt-1">Live analytics and financial health.</p>
       </div>
 
-      {/* KPI grid */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {kpiData.map((kpi) => (
-          <KpiCard key={kpi.title} {...kpi} />
-        ))}
-      </div>
-
-      {/* Recent Activity Section */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <h3 className="text-base font-semibold text-foreground mb-4">
-            Recent Transactions
-          </h3>
-          {recentBills.length === 0 ? (
-            <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-border">
-              <p className="text-sm text-muted-foreground">
-                No bills yet — create your first bill to get started.
-              </p>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-xl border shadow-sm border-l-4 border-l-green-500">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-gray-500">Today's Cash In</p>
+              <h3 className="text-2xl font-bold text-gray-900 mt-1">Rs. {data.todayRevenue.toLocaleString()}</h3>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {recentBills.map((bill) => (
-                <div key={bill.id} className="flex items-center justify-between border-b border-border pb-4 last:border-0 last:pb-0">
+            <div className="p-3 bg-green-50 text-green-600 rounded-lg"><DollarSign className="w-5 h-5" /></div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border shadow-sm border-l-4 border-l-red-500">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-medium text-gray-500">Outstanding Debt</p>
+              <h3 className="text-2xl font-bold text-gray-900 mt-1">Rs. {data.outstandingDebt.toLocaleString()}</h3>
+            </div>
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg"><TrendingDown className="w-5 h-5" /></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Low Stock Alerts */}
+        <div className="bg-white rounded-xl border shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <AlertTriangle className="text-orange-500" />
+            <h3 className="font-bold text-lg">Critical Low Stock Alerts</h3>
+          </div>
+          <div className="space-y-4">
+            {data.lowStockItems.length === 0 ? (
+              <p className="text-gray-500 text-sm">All inventory levels are healthy.</p>
+            ) : (
+              data.lowStockItems.map((item: any) => (
+                <div key={item.id} className="flex justify-between items-center border-b pb-3">
                   <div>
-                    <p className="text-sm font-medium text-foreground">{bill.billNumber}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {bill.customer?.name || "Walk-in Customer"}
-                    </p>
+                    <p className="font-medium">{item.name}</p>
+                    <p className="text-xs text-gray-500">{item.barcode}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-bold text-primary">Rs. {Number(bill.totalAmount).toFixed(2)}</p>
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-500/10 text-green-500">
-                      {bill.status}
-                    </span>
+                    <p className="font-bold text-red-600">{item.stockQty} {item.unit}</p>
+                    <p className="text-[10px] text-gray-400">Reorder at: {item.reorderLevel}</p>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <h3 className="text-base font-semibold text-foreground mb-4">
-            System Status
-          </h3>
+        {/* Top Debtors */}
+        <div className="bg-white rounded-xl border shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <Users className="text-blue-500" />
+            <h3 className="font-bold text-lg">Largest Debtors (Credit Given)</h3>
+          </div>
           <div className="space-y-4">
-             <div className="flex items-center gap-3">
-               <div className={`flex h-2 w-2 rounded-full ${lowStockCount > 0 ? 'bg-destructive' : 'bg-green-500'}`}></div>
-               <p className="text-sm text-foreground">
-                 {lowStockCount > 0 ? `${lowStockCount} items need restocking` : 'Inventory levels are healthy'}
-               </p>
-             </div>
-             <div className="flex items-center gap-3">
-               <div className="flex h-2 w-2 rounded-full bg-green-500"></div>
-               <p className="text-sm text-foreground">Database connected successfully</p>
-             </div>
+            {data.topDebtors.length === 0 ? (
+              <p className="text-gray-500 text-sm">No customers currently owe money. Great job!</p>
+            ) : (
+              data.topDebtors.map((debtor: any, idx: number) => (
+                <div key={idx} className="flex justify-between items-center border-b pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">
+                      {debtor.name.charAt(0)}
+                    </div>
+                    <p className="font-medium">{debtor.name}</p>
+                  </div>
+                  <p className="font-bold text-red-600">Rs. {debtor.amount.toLocaleString()}</p>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
