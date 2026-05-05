@@ -104,36 +104,37 @@ model Supplier {
 }
 
 model Item {
-  id             String   @id @default(uuid())
-  barcode        String   @unique
-  name           String
-  description    String?
-  category       String?
-  unit           String   @default("pcs")
-  stockQty       Int      @default(0)
-  reorderLevel   Int      @default(5)
-  buyingPrice    Decimal  @db.Decimal(12, 2)
-  sellingPrice   Decimal  @db.Decimal(12, 2)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id           String   @id @default(uuid())
+  barcode      String   @unique
+  name         String
+  description  String?
+  category     String?
+  unit         String   @default("pcs")
+  stockQty     Int      @default(0)
+  reorderLevel Int      @default(5)
+  buyingPrice  Decimal  @db.Decimal(12, 2)
+  sellingPrice Decimal  @db.Decimal(12, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   billItems     BillItem[]
   purchaseItems PurchaseItem[]
 }
 
 model Bill {
-  id           String   @id @default(uuid())
-  billNumber   String   @unique
-  customerId   String?
-  userId       String
-  status       String   @default("PENDING") // PENDING | PAID | PARTIAL | CANCELLED
-  subtotal     Decimal  @db.Decimal(12, 2)
-  discount     Decimal  @default(0) @db.Decimal(12, 2)
-  tax          Decimal  @default(0) @db.Decimal(12, 2)
-  totalAmount  Decimal  @db.Decimal(12, 2)
-  notes        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(uuid())
+  billNumber  String   @unique
+  customerId  String?
+  userId      String
+  status      String   @default("PENDING") // PENDING | PAID | PARTIAL | CANCELLED
+  subtotal    Decimal  @db.Decimal(12, 2)
+  discount    Decimal  @default(0) @db.Decimal(12, 2)
+  tax         Decimal  @default(0) @db.Decimal(12, 2)
+  totalAmount Decimal  @db.Decimal(12, 2)
+  amountPaid  Decimal  @default(0) @db.Decimal(12, 2) // NEW: Tracks exactly how much the customer paid
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   customer  Customer?  @relation(fields: [customerId], references: [id])
   user      User       @relation(fields: [userId], references: [id])
@@ -143,13 +144,13 @@ model Bill {
 }
 
 model BillItem {
-  id          String  @id @default(uuid())
-  billId      String
-  itemId      String
-  quantity    Int
-  unitPrice   Decimal @db.Decimal(12, 2)
-  discount    Decimal @default(0) @db.Decimal(12, 2)
-  totalPrice  Decimal @db.Decimal(12, 2)
+  id         String  @id @default(uuid())
+  billId     String
+  itemId     String
+  quantity   Int
+  unitPrice  Decimal @db.Decimal(12, 2)
+  discount   Decimal @default(0) @db.Decimal(12, 2)
+  totalPrice Decimal @db.Decimal(12, 2)
 
   bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
   item Item @relation(fields: [itemId], references: [id])
@@ -163,14 +164,14 @@ enum PaymentMethod {
 }
 
 model Payment {
-  id            String        @id @default(uuid())
-  billId        String
-  customerId    String?
-  amount        Decimal       @db.Decimal(12, 2)
-  method        PaymentMethod @default(CASH)
-  reference     String?
-  paidAt        DateTime      @default(now())
-  createdAt     DateTime      @default(now())
+  id         String        @id @default(uuid())
+  billId     String
+  customerId String?
+  amount     Decimal       @db.Decimal(12, 2)
+  method     PaymentMethod @default(CASH)
+  reference  String?
+  paidAt     DateTime      @default(now())
+  createdAt  DateTime      @default(now())
 
   bill     Bill      @relation(fields: [billId], references: [id], onDelete: Cascade)
   customer Customer? @relation(fields: [customerId], references: [id])
@@ -184,18 +185,18 @@ enum ChequeStatus {
 }
 
 model Cheque {
-  id             String       @id @default(uuid())
-  billId         String
-  customerId     String?
-  chequeNumber   String
-  bank           String
-  amount         Decimal      @db.Decimal(12, 2)
-  chequeDate     DateTime
-  depositDate    DateTime?
-  status         ChequeStatus @default(PENDING)
-  notes          String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id           String       @id @default(uuid())
+  billId       String
+  customerId   String?
+  chequeNumber String
+  bank         String
+  amount       Decimal      @db.Decimal(12, 2)
+  chequeDate   DateTime
+  depositDate  DateTime?
+  status       ChequeStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   bill     Bill      @relation(fields: [billId], references: [id], onDelete: Cascade)
   customer Customer? @relation(fields: [customerId], references: [id])
@@ -210,16 +211,18 @@ enum OrderStatus {
 }
 
 model PurchaseOrder {
-  id           String      @id @default(uuid())
-  orderNumber  String      @unique
-  supplierId   String
-  status       OrderStatus @default(DRAFT)
-  totalAmount  Decimal     @db.Decimal(12, 2)
-  notes        String?
-  orderedAt    DateTime?
-  receivedAt   DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id            String      @id @default(uuid())
+  orderNumber   String      @unique
+  supplierId    String
+  status        OrderStatus @default(DRAFT) // Tracks fulfillment (received goods)
+  paymentStatus String      @default("UNPAID") // NEW: Tracks financials (UNPAID | PARTIAL | PAID)
+  totalAmount   Decimal     @db.Decimal(12, 2)
+  amountPaid    Decimal     @default(0) @db.Decimal(12, 2) // NEW: Tracks exactly how much Uncle paid
+  notes         String?
+  orderedAt     DateTime?
+  receivedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   supplier      Supplier       @relation(fields: [supplierId], references: [id])
   purchaseItems PurchaseItem[]
