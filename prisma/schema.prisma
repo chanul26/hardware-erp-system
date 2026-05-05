@@ -80,6 +80,7 @@ model User {
 model Customer {
   id        String   @id @default(uuid())
   name      String
+  nic       String?  @unique
   phone     String?
   email     String?  @unique
   address   String?

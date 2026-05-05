@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Search, ShoppingCart, Plus, Minus, Trash2, CheckCircle2, Loader2, Printer, Barcode, UserCircle } from "lucide-react";
+import { Search, ShoppingCart, Plus, Minus, Trash2, CheckCircle2, Loader2, Printer, Barcode, UserCircle, X } from "lucide-react";
 
 interface CatalogItem { id: string; barcode: string; name: string; sellingPrice: string; stockQty: number; }
 interface CartItem { id: string; name: string; price: number; quantity: number; maxStock: number; }
@@ -9,19 +9,32 @@ interface InvoiceData { billNumber: string; items: CartItem[]; subtotal: number;
 
 export default function BillingPage() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
   const [searchTerm, setSearchBase] = useState(""); 
   const [loadingCatalog, setLoadingCatalog] = useState(true);
   
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [customerId, setCustomerId] = useState<string>("");
   const [discount, setDiscount] = useState<string>("");
   const [amountPaid, setAmountPaid] = useState<string>("");
   
+  // --- NEW: Advanced Customer State ---
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerResults, setCustomerResults] = useState<any[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  
+  // --- NEW: Quick-Add Customer State ---
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
+  const [newCusName, setNewCusName] = useState("");
+  const [newCusNic, setNewCusNic] = useState("");
+  const [newCusPhone, setNewCusPhone] = useState("");
+  const [quickAddLoading, setQuickAddLoading] = useState(false);
+  const [quickAddError, setQuickAddError] = useState("");
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [lastInvoice, setLastInvoice] = useState<InvoiceData | null>(null);
 
+  // 1. Hardware Scanner Hook
   useEffect(() => {
     let barcodeAccumulator = "";
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -39,17 +52,27 @@ export default function BillingPage() {
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, [catalog]);
 
+  // 2. Initial Catalog Load
   useEffect(() => {
     fetch("/api/items").then(res => res.json()).then(json => {
       if (json.success) setCatalog(json.data);
       setLoadingCatalog(false);
     });
-    // Fetch customers so cashiers can attach debt to a specific person
-    fetch("/api/customers").then(res => res.json()).then(json => {
-      if (json.success) setCustomers(json.data);
-    }).catch(() => console.log("Waiting for customer API..."));
   }, []);
 
+  // 3. NEW: Live Customer Search Hook
+  useEffect(() => {
+    if (customerQuery.length > 1) {
+      // Fetch matching customers from Adeesha's API
+      fetch(`/api/customers?search=${customerQuery}&limit=10`)
+        .then(res => res.json())
+        .then(data => setCustomerResults(data.customers || []));
+    } else {
+      setCustomerResults([]);
+    }
+  }, [customerQuery]);
+
+  // --- Cart Functions ---
   const addToCart = (item: CatalogItem) => {
     const price = parseFloat(item.sellingPrice);
     setCart((prev) => {
@@ -75,19 +98,46 @@ export default function BillingPage() {
 
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((item) => item.id !== id));
   
-  // Financial Math
+  // --- Financial Math ---
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const numDiscount = parseFloat(discount) || 0;
   const finalTotal = Math.max(0, subtotal - numDiscount);
 
+  // --- NEW: Handle Quick Add Customer ---
+  const handleQuickAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setQuickAddLoading(true);
+    setQuickAddError("");
+
+    try {
+      const res = await fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newCusName, nic: newCusNic, phone: newCusPhone }),
+      });
+      const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.error);
+
+      // Success! Auto-select them for the checkout
+      setSelectedCustomer(data);
+      setCustomerQuery("");
+      setIsQuickAddOpen(false);
+      setNewCusName(""); setNewCusNic(""); setNewCusPhone("");
+    } catch (err: any) {
+      setQuickAddError(err.message);
+    } finally {
+      setQuickAddLoading(false);
+    }
+  };
+
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     
-    // Default to full payment if they leave the box blank
     const finalAmountPaid = amountPaid !== "" ? parseFloat(amountPaid) : finalTotal;
 
-    // SECURITY BLOCK: Cannot give credit without selecting a customer
-    if (finalAmountPaid < finalTotal && !customerId) {
+    // SECURITY BLOCK: Cannot give credit without linking a tracked customer
+    if (finalAmountPaid < finalTotal && !selectedCustomer) {
         setMessage({ type: "error", text: "You must link a Customer to log unpaid debt." });
         return;
     }
@@ -101,7 +151,7 @@ export default function BillingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
             items: cart, 
-            customerId: customerId || undefined,
+            customerId: selectedCustomer?.id || undefined,
             subtotal, 
             discount: numDiscount,
             totalAmount: finalTotal, 
@@ -122,7 +172,8 @@ export default function BillingPage() {
       });
       
       setMessage({ type: "success", text: `Invoice ${data.bill.billNumber} generated.` });
-      setCart([]); setAmountPaid(""); setDiscount(""); setCustomerId("");
+      // Reset POS state
+      setCart([]); setAmountPaid(""); setDiscount(""); setSelectedCustomer(null); setCustomerQuery("");
       
       const refresh = await fetch("/api/items").then(r => r.json());
       if (refresh.success) setCatalog(refresh.data);
@@ -139,7 +190,8 @@ export default function BillingPage() {
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)] print:hidden p-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)] print:hidden p-4 relative z-0">
+        
         {/* Left Side: Catalog */}
         <div className="lg:col-span-2 flex flex-col space-y-4">
           <div className="flex items-center gap-4 rounded-xl border bg-white p-3 shadow-sm">
@@ -175,7 +227,7 @@ export default function BillingPage() {
         </div>
 
         {/* Right Side: Cart & Financials */}
-        <div className="rounded-xl border border-border bg-card shadow-sm flex flex-col">
+        <div className="rounded-xl border border-border bg-card shadow-sm flex flex-col relative z-10">
           <div className="p-4 border-b border-border flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingCart className="h-5 w-5 text-primary" />
@@ -217,19 +269,73 @@ export default function BillingPage() {
           </div>
 
           <div className="p-4 border-t border-border bg-muted/30 space-y-4">
-            {/* Customer Linker */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1"><UserCircle className="h-3 w-3"/> Link Customer</label>
-              <select 
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Walk-in Customer (No Credit Allowed)</option>
-                {customers.map((c: any) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+            
+            {/* --- NEW: Searchable Customer Combobox --- */}
+            <div className="space-y-1.5 relative">
+              <div className="flex justify-between items-center">
+                  <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                    <UserCircle className="h-3 w-3"/> Link Customer
+                  </label>
+                  {selectedCustomer && (
+                    <button onClick={() => setSelectedCustomer(null)} className="text-xs text-destructive hover:underline">
+                        Remove Link
+                    </button>
+                  )}
+              </div>
+
+              {selectedCustomer ? (
+                  // State 1: Customer Selected
+                  <div className="w-full rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm flex justify-between items-center">
+                      <div>
+                          <p className="font-bold text-blue-800">{selectedCustomer.name}</p>
+                          <p className="text-xs text-blue-600">NIC: {selectedCustomer.nic || "No NIC"} | Ph: {selectedCustomer.phone}</p>
+                      </div>
+                      <CheckCircle2 className="h-5 w-5 text-blue-500" />
+                  </div>
+              ) : (
+                  // State 2: Searching
+                  <div className="relative">
+                      <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
+                      <input 
+                          type="text" 
+                          placeholder="Search Name or NIC (or leave blank for Walk-in)"
+                          value={customerQuery}
+                          onChange={(e) => {
+                              setCustomerQuery(e.target.value);
+                              setIsDropdownOpen(true);
+                          }}
+                          className="w-full rounded-md border border-input bg-background pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-primary"
+                      />
+                      
+                      {/* Search Results Dropdown */}
+                      {isDropdownOpen && customerQuery.length > 1 && (
+                          <div className="absolute z-50 w-full mt-1 bg-white border border-border rounded-md shadow-xl max-h-48 overflow-y-auto">
+                              {customerResults.length > 0 ? (
+                                  customerResults.map((c) => (
+                                      <button 
+                                          key={c.id} 
+                                          onClick={() => { setSelectedCustomer(c); setIsDropdownOpen(false); setCustomerQuery(""); }}
+                                          className="w-full text-left px-4 py-2 text-sm hover:bg-muted border-b border-border last:border-0"
+                                      >
+                                          <p className="font-bold text-foreground">{c.name}</p>
+                                          <p className="text-xs text-muted-foreground">NIC: {c.nic || "None"} | Ph: {c.phone}</p>
+                                      </button>
+                                  ))
+                              ) : (
+                                  <div className="p-3 text-center">
+                                      <p className="text-sm text-muted-foreground mb-2">No matching customers found.</p>
+                                      <button 
+                                        onClick={() => { setIsDropdownOpen(false); setIsQuickAddOpen(true); setNewCusName(customerQuery); }}
+                                        className="text-sm bg-primary text-primary-foreground px-3 py-1.5 rounded-md font-medium flex items-center gap-2 justify-center w-full"
+                                      >
+                                          <Plus className="h-4 w-4" /> Add "{customerQuery}"
+                                      </button>
+                                  </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+              )}
             </div>
 
             {/* Discount & Subtotal */}
@@ -271,7 +377,7 @@ export default function BillingPage() {
                    amountPaid && parseFloat(amountPaid) < finalTotal ? "border-orange-500 bg-orange-50/50 text-orange-700" : "border-input bg-background"
                 }`} 
               />
-              {amountPaid && parseFloat(amountPaid) < finalTotal && !customerId && (
+              {amountPaid && parseFloat(amountPaid) < finalTotal && !selectedCustomer && (
                   <p className="text-xs text-destructive mt-1 font-medium">⚠️ Error: Must link a customer to give credit.</p>
               )}
             </div>
@@ -295,6 +401,41 @@ export default function BillingPage() {
           </div>
         </div>
       </div>
+
+      {/* --- NEW: Quick Add Customer Modal --- */}
+      {isQuickAddOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-background w-full max-w-md rounded-xl shadow-xl overflow-hidden border border-border">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-lg font-bold">Quick Register Customer</h2>
+              <button onClick={() => setIsQuickAddOpen(false)} className="text-muted-foreground hover:bg-muted p-1 rounded-full"><X className="h-5 w-5"/></button>
+            </div>
+            <form onSubmit={handleQuickAdd} className="p-4 space-y-4">
+              {quickAddError && <p className="text-sm text-destructive bg-destructive/15 p-2 rounded">{quickAddError}</p>}
+              
+              <div>
+                <label className="text-sm font-medium">Name *</label>
+                <input required value={newCusName} onChange={(e) => setNewCusName(e.target.value)} className="w-full mt-1 border p-2 rounded-md" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-blue-600">NIC Number (Required for Debt)</label>
+                <input value={newCusNic} onChange={(e) => setNewCusNic(e.target.value)} placeholder="e.g. 199012345678" className="w-full mt-1 border border-blue-200 bg-blue-50/50 p-2 rounded-md" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Phone *</label>
+                <input required value={newCusPhone} onChange={(e) => setNewCusPhone(e.target.value)} className="w-full mt-1 border p-2 rounded-md" />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t mt-4">
+                <button type="button" onClick={() => setIsQuickAddOpen(false)} className="px-4 py-2 border rounded-md text-sm">Cancel</button>
+                <button type="submit" disabled={quickAddLoading} className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-bold disabled:opacity-50">
+                  {quickAddLoading ? "Saving..." : "Save & Link to Bill"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Receipt Template ── */}
       {lastInvoice && (
