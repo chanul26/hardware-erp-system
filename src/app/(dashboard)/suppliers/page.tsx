@@ -2,56 +2,27 @@
 
 import { useEffect, useState } from "react";
 import AddSupplierForm from "./AddSupplierForm";
-import { Truck, CheckCircle2, Loader2 } from "lucide-react";
-
-export default function SuppliersPage() {
-  const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Settlement Modal State
-  const [settleOpen, setSettleOpen] = useState(false);
-  const [settleAmount, setSettleAmount] = useState("");
-  const [selectedSupplier, setSelectedSupplier] = useState<any | null>(null);
-  const [isSettling, setIsSettling] = useState(false);
-  const [message, setMessage] = useState<{type: "success"|"error", text: string} | null>(null);
-
-  const loadSuppliers = async () => {
-    setLoading(true);
-    const res = await fetch("/api/suppliers", { cache: "no-store" });
-    const json = await res.json();
-    if (json.success) setSuppliers(json.data);
-    setLoading(false);
-  };
+import { Truck, AlertCircle } from "lucide-react";
 
   useEffect(() => {
     loadSuppliers();
   }, []);
 
-  const handleSettleDebt = async () => {
-    if (!selectedSupplier || !settleAmount || Number(settleAmount) <= 0) return;
-    setIsSettling(true);
-    setMessage(null);
+export const dynamic = "force-dynamic";
 
-    const res = await fetch("/api/suppliers/settle", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        supplierId: selectedSupplier.id,
-        amount: Number(settleAmount)
-      })
+export default async function SuppliersPage() {
+  let suppliers: any[] = [];
+  let fetchError = false;
+
+  // Safe Database Fetching
+  try {
+    suppliers = await prisma.supplier.findMany({
+      orderBy: { createdAt: "desc" },
     });
-
-    if (res.ok) {
-      setSettleOpen(false);
-      setSettleAmount("");
-      setMessage({ type: "success", text: `Successfully logged Rs. ${settleAmount} payment to ${selectedSupplier.name}` });
-      loadSuppliers(); 
-      setTimeout(() => setMessage(null), 4000);
-    } else {
-      setMessage({ type: "error", text: "Failed to process payment." });
-    }
-    setIsSettling(false);
-  };
+  } catch (error) {
+    console.error("Failed to load suppliers from DB:", error);
+    fetchError = true;
+  }
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-6">
@@ -88,9 +59,14 @@ export default function SuppliersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {loading ? (
+              {fetchError ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary"/></td>
+                  <td colSpan={5} className="px-6 py-8 text-center text-destructive">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle className="h-6 w-6" />
+                      <p>Failed to load data. Please check your database connection.</p>
+                    </div>
+                  </td>
                 </tr>
               ) : suppliers.length === 0 ? (
                 <tr>

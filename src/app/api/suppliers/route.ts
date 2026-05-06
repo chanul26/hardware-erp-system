@@ -12,23 +12,11 @@ export async function GET() {
         supplierPayments: { select: { amount: true } }
       }
     });
-
-    // Calculate live debt (How much Uncle owes to each supplier)
-    const suppliersWithDebt = suppliers.map(sup => {
-      const totalBilled = sup.purchaseOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
-      const totalPaid = sup.supplierPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-      
-      const { purchaseOrders, supplierPayments, ...cleanSupplier } = sup; 
-      return {
-        ...cleanSupplier,
-        totalDebt: Math.max(0, totalBilled - totalPaid)
-      };
-    });
-
-    return NextResponse.json({ success: true, data: suppliersWithDebt });
-  } catch (error: any) {
+    return NextResponse.json({ success: true, data: suppliers });
+  } catch (error) {
+    console.error("[SUPPLIER_GET_ERROR]", error); // Log to server console for debugging
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to fetch suppliers" },
+      { success: false, error: "Failed to fetch suppliers due to a server error." },
       { status: 500 }
     );
   }
@@ -36,11 +24,21 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // Safely parse JSON to prevent crashes on bad payloads
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        { success: false, error: "Invalid JSON payload provided." },
+        { status: 400 }
+      );
+    }
+
     const { name, phone, email, address } = body;
 
-    // Validation: Name is required
-    if (!name) {
+    // Validation: Trim spaces and ensure name exists
+    if (!name || typeof name !== "string" || name.trim() === "") {
       return NextResponse.json(
         { success: false, error: "Supplier name is required" },
         { status: 400 }
@@ -48,8 +46,10 @@ export async function POST(request: Request) {
     }
 
     // Validation: Check if email already exists
-    if (email) {
-      const existing = await prisma.supplier.findUnique({ where: { email } });
+    if (email && email.trim() !== "") {
+      const existing = await prisma.supplier.findUnique({ 
+        where: { email: email.trim() } 
+      });
       if (existing) {
         return NextResponse.json(
           { success: false, error: "A supplier with this email already exists" },
@@ -61,21 +61,18 @@ export async function POST(request: Request) {
     // Save to the Prisma database
     const newSupplier = await prisma.supplier.create({
       data: {
-        name,
-        phone: phone || null,
-        email: email || null,
-        address: address || null,
+        name: name.trim(),
+        phone: phone?.trim() || null,
+        email: email?.trim() || null,
+        address: address?.trim() || null,
       },
     });
 
-    // Return the proper 201 Created status
+    return NextResponse.json({ success: true, data: newSupplier }, { status: 201 });
+  } catch (error) {
+    console.error("[SUPPLIER_POST_ERROR]", error); // Log to server console
     return NextResponse.json(
-      { success: true, data: newSupplier }, 
-      { status: 201 }
-    );
-  } catch (error: any) {
-    return NextResponse.json(
-      { success: false, error: error.message || "Failed to create supplier" },
+      { success: false, error: "An unexpected error occurred while saving the supplier." },
       { status: 500 }
     );
   }

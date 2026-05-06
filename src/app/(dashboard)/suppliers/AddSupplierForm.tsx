@@ -17,10 +17,10 @@ export default function AddSupplierForm() {
 
     const formData = new FormData(e.currentTarget);
     const data = {
-      name: formData.get("name"),
-      phone: formData.get("phone"),
-      email: formData.get("email"),
-      address: formData.get("address"),
+      name: formData.get("name")?.toString().trim(),
+      phone: formData.get("phone")?.toString().trim(),
+      email: formData.get("email")?.toString().trim(),
+      address: formData.get("address")?.toString().trim(),
     };
 
     try {
@@ -30,7 +30,13 @@ export default function AddSupplierForm() {
         body: JSON.stringify(data),
       });
 
-      const result = await response.json();
+      // Safe JSON Parsing in case server returns 502 HTML instead of JSON
+      let result;
+      try {
+        result = await response.json();
+      } catch (parseError) {
+        throw new Error("Server returned an invalid response. Please try again.");
+      }
 
       if (!response.ok) {
         throw new Error(result.error || "Failed to add supplier");
@@ -38,8 +44,13 @@ export default function AddSupplierForm() {
 
       setIsOpen(false);
       router.refresh(); 
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      // Proper TypeScript error handling
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("A network error occurred. Check your connection.");
+      }
     } finally {
       setLoading(false);
     }
@@ -47,7 +58,6 @@ export default function AddSupplierForm() {
 
   return (
     <>
-      {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(true)}
         className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition shadow-sm font-medium text-sm"
@@ -56,12 +66,10 @@ export default function AddSupplierForm() {
         Add New Supplier
       </button>
 
-      {/* Modal Overlay */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 sm:p-0 animate-in fade-in duration-200">
           <div className="bg-background w-full max-w-2xl rounded-xl shadow-xl overflow-hidden border border-border animate-in zoom-in-95 duration-200">
             
-            {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-border">
               <h2 className="text-lg font-semibold text-foreground tracking-tight">
                 Add New Supplier
@@ -75,11 +83,9 @@ export default function AddSupplierForm() {
               </button>
             </div>
 
-            {/* Form Content */}
             <form onSubmit={handleSubmit}>
               <div className="p-6 space-y-6">
                 
-                {/* Error Banner */}
                 {error && (
                   <div className="p-3 bg-destructive/15 text-destructive rounded-md text-sm font-medium border border-destructive/20">
                     {error}
@@ -87,7 +93,6 @@ export default function AddSupplierForm() {
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Name Field */}
                   <div className="space-y-2">
                     <label className="text-sm font-medium leading-none text-foreground">
                       Supplier Name <span className="text-destructive">*</span>
@@ -100,7 +105,6 @@ export default function AddSupplierForm() {
                     />
                   </div>
 
-                  {/* Phone Field */}
                   <div className="space-y-2">
                     <label className="text-sm font-medium leading-none text-foreground">
                       Phone Number
@@ -112,7 +116,6 @@ export default function AddSupplierForm() {
                     />
                   </div>
 
-                  {/* Email Field */}
                   <div className="space-y-2">
                     <label className="text-sm font-medium leading-none text-foreground">
                       Email Address
@@ -125,7 +128,6 @@ export default function AddSupplierForm() {
                     />
                   </div>
 
-                  {/* Address Field */}
                   <div className="space-y-2">
                     <label className="text-sm font-medium leading-none text-foreground">
                       Address
@@ -139,7 +141,6 @@ export default function AddSupplierForm() {
                 </div>
               </div>
               
-              {/* Footer Actions */}
               <div className="flex items-center justify-end gap-3 p-6 border-t border-border bg-muted/10">
                 <button
                   type="button"
