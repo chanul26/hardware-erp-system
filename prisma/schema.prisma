@@ -101,7 +101,8 @@ model Supplier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  purchaseOrders PurchaseOrder[]
+  purchaseOrders   PurchaseOrder[]
+  supplierPayments SupplierPayment[]
 }
 
 model Item {
@@ -225,8 +226,9 @@ model PurchaseOrder {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  supplier      Supplier       @relation(fields: [supplierId], references: [id])
-  purchaseItems PurchaseItem[]
+  supplier         Supplier          @relation(fields: [supplierId], references: [id])
+  purchaseItems    PurchaseItem[]
+  supplierPayments SupplierPayment[]
 }
 
 model PurchaseItem {
@@ -240,4 +242,18 @@ model PurchaseItem {
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   item          Item          @relation(fields: [itemId], references: [id])
+}
+
+model SupplierPayment {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  supplierId      String
+  amount          Decimal       @db.Decimal(12, 2)
+  method          PaymentMethod @default(CASH)
+  reference       String?
+  paidAt          DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  supplier        Supplier      @relation(fields: [supplierId], references: [id])
 }

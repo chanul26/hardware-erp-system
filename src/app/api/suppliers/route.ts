@@ -1,12 +1,31 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const suppliers = await prisma.supplier.findMany({
       orderBy: { createdAt: "desc" },
+      include: {
+        purchaseOrders: { select: { totalAmount: true } },
+        supplierPayments: { select: { amount: true } }
+      }
     });
-    return NextResponse.json({ success: true, data: suppliers });
+
+    // Calculate live debt (How much Uncle owes to each supplier)
+    const suppliersWithDebt = suppliers.map(sup => {
+      const totalBilled = sup.purchaseOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
+      const totalPaid = sup.supplierPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+      
+      const { purchaseOrders, supplierPayments, ...cleanSupplier } = sup; 
+      return {
+        ...cleanSupplier,
+        totalDebt: Math.max(0, totalBilled - totalPaid)
+      };
+    });
+
+    return NextResponse.json({ success: true, data: suppliersWithDebt });
   } catch (error: any) {
     return NextResponse.json(
       { success: false, error: error.message || "Failed to fetch suppliers" },

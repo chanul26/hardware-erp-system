@@ -1,14 +1,11 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/lib/prisma"; // Use the global prisma instance
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { supplierId, items, notes } = body;
+    const { supplierId, items, notes, amountPaid } = body;
 
-    // 1. Input Validation
     if (!supplierId || !items || items.length === 0) {
       return NextResponse.json(
         { error: "Supplier ID and at least one item are required." },
@@ -16,66 +13,85 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. Calculate the exact total cost of this delivery
     const totalAmount = items.reduce(
       (sum: number, item: any) => sum + item.quantity * item.unitCost,
       0
     );
 
-    // 3. THE UNBREAKABLE TRANSACTION
-    // We execute the PO creation, the Line Items, and the Stock Update all at once.
-    // If any single step fails, Prisma rolls back the entire database to protect your data.
-    const transactionSteps = [];
+    const finalAmountPaid = amountPaid !== undefined && amountPaid !== "" ? Number(amountPaid) : totalAmount;
+    
+    let paymentStatus = "UNPAID";
+    if (finalAmountPaid >= totalAmount) {
+        paymentStatus = "PAID";
+    } else if (finalAmountPaid > 0) {
+        paymentStatus = "PARTIAL";
+    }
 
-    // Step A: Create the Purchase Order immediately as "RECEIVED"
-    const orderNumber = `RCV-${Date.now().toString().slice(-6)}`;
-    const createRestockBill = prisma.purchaseOrder.create({
-      data: {
-        orderNumber,
-        supplierId,
-        status: "RECEIVED",
-        totalAmount,
-        notes: notes || "Direct Inbound Restock",
-        receivedAt: new Date(),
-        purchaseItems: {
-          create: items.map((item: any) => ({
-            itemId: item.itemId,
-            quantity: item.quantity,
-            unitCost: item.unitCost,
-            totalCost: item.quantity * item.unitCost,
-            receivedQty: item.quantity, // Fully received instantly
-          })),
-        },
-      },
-    });
-    transactionSteps.push(createRestockBill);
-
-    // Step B: Loop through every item and increment the global stock quantity
-    for (const item of items) {
-      const updateStock = prisma.item.update({
-        where: { id: item.itemId },
+    // THE FIX: We use a sequential transaction to ensure we get the PO ID
+    // so we can attach the payment ledger directly to it.
+    const result = await prisma.$transaction(async (tx) => {
+      
+      // Step A: Create the Purchase Order
+      const po = await tx.purchaseOrder.create({
         data: {
-          stockQty: {
-            increment: item.quantity,
+          orderNumber: `RCV-${Date.now().toString().slice(-6)}`,
+          supplierId,
+          status: "RECEIVED", 
+          paymentStatus,      
+          totalAmount,        
+          amountPaid: finalAmountPaid, 
+          notes: notes || "Direct Inbound Restock",
+          receivedAt: new Date(),
+          purchaseItems: {
+            create: items.map((item: any) => ({
+              itemId: item.itemId,
+              quantity: item.quantity,
+              unitCost: item.unitCost,
+              totalCost: item.quantity * item.unitCost,
+              receivedQty: item.quantity, 
+            })),
           },
         },
       });
-      transactionSteps.push(updateStock);
-    }
 
-    // Execute the transaction
-    const result = await prisma.$transaction(transactionSteps);
+      // Step B: THE MISSING LEDGER LOGIC
+      // If Uncle paid anything upfront, log it in the SupplierPayment ledger!
+      if (finalAmountPaid > 0) {
+        await tx.supplierPayment.create({
+          data: {
+            purchaseOrderId: po.id,
+            supplierId: supplierId,
+            amount: finalAmountPaid,
+            method: "CASH"
+          }
+        });
+      }
+
+      // Step C: Update Inventory
+      for (const item of items) {
+        await tx.item.update({
+          where: { id: item.itemId },
+          data: {
+            stockQty: {
+              increment: item.quantity,
+            },
+          },
+        });
+      }
+
+      return po;
+    });
 
     return NextResponse.json({
       success: true,
-      message: "Stock successfully updated",
-      data: result[0], // Returns the created Purchase Order
+      message: "Stock updated and supplier ledger recorded",
+      data: result, 
     });
 
   } catch (error: any) {
     console.error("DIRECT RESTOCK ERROR:", error);
     return NextResponse.json(
-      { error: "Failed to process restock transaction. Please try again." },
+      { error: "Failed to process restock transaction." },
       { status: 500 }
     );
   }
