@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const suppliers = await prisma.supplier.findMany({
       orderBy: { createdAt: "desc" },
+      include: {
+        purchaseOrders: { select: { totalAmount: true } },
+        supplierPayments: { select: { amount: true } }
+      }
     });
     return NextResponse.json({ success: true, data: suppliers });
   } catch (error) {
