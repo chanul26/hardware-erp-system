@@ -1,24 +1,38 @@
-version: '3.8'
-
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
     container_name: hardware_erp_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-erp_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_password}
-      POSTGRES_DB: ${POSTGRES_DB:-hardware_erp}
+      POSTGRES_USER: erp_user
+      POSTGRES_PASSWORD: erp_password
+      POSTGRES_DB: hardware_erp
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-erp_user} -d ${POSTGRES_DB:-hardware_erp}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U erp_user -d hardware_erp"]
+      interval: 5s
       timeout: 5s
       retries: 5
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hardware_erp_app
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      # Use the service name 'db' as the hostname
+      DATABASE_URL: "postgresql://erp_user:erp_password@db:5432/hardware_erp?schema=public"
+      NEXTAUTH_SECRET: "super-secret-12345"
+      NEXTAUTH_URL: "http://localhost:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgres_data:
-    driver: local
