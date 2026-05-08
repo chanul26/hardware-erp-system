@@ -246,14 +246,45 @@ model PurchaseItem {
 
 model SupplierPayment {
   id              String        @id @default(uuid())
+
   purchaseOrderId String
   supplierId      String
+
   amount          Decimal       @db.Decimal(12, 2)
+
   method          PaymentMethod @default(CASH)
+
   reference       String?
+
   paidAt          DateTime      @default(now())
+
   createdAt       DateTime      @default(now())
 
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
   supplier        Supplier      @relation(fields: [supplierId], references: [id])
+
+  supplierCheque  SupplierCheque?
+}
+
+
+
+model SupplierCheque {
+  id                String       @id @default(uuid())
+
+  supplierPaymentId String       @unique
+
+  chequeNumber      String
+
+  bank              String
+
+  amount            Decimal      @db.Decimal(12, 2)
+
+  chequeDate        DateTime
+
+  status            ChequeStatus @default(PENDING)
+
+  createdAt         DateTime     @default(now())
+
+  supplierPayment   SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
 }
