@@ -67,7 +67,7 @@ export async function POST(req: Request) {
         });
       }
 
-      // Step C: Update Inventory
+      // Step C: Update Inventory and Auto-Update Cost Price
       for (const item of items) {
         await tx.item.update({
           where: { id: item.itemId },
@@ -75,6 +75,7 @@ export async function POST(req: Request) {
             stockQty: {
               increment: item.quantity,
             },
+            buyingPrice: Number(item.unitCost), // <-- Phase 1: Auto-update cost floor
           },
         });
       }

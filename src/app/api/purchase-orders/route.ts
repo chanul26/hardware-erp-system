@@ -134,18 +134,13 @@ export async function POST(req: Request) {
         // UPDATE INVENTORY
         // =====================================
 
+        // Step: Update Inventory and Auto-Update Cost Price
         for (const item of items) {
           await tx.item.update({
-            where: {
-              id: item.itemId,
-            },
-
+            where: { id: item.itemId },
             data: {
-              stockQty: {
-                increment: Number(
-                  item.quantity
-                ),
-              },
+              stockQty: { increment: Number(item.quantity) },
+              buyingPrice: Number(item.unitCost), // <-- Phase 1: Auto-update cost floor
             },
           });
         }
