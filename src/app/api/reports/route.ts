@@ -31,10 +31,18 @@ export async function GET(req: Request) {
       searchParams.get("range") ||
       "today";
 
+    const graphRange =
+      searchParams.get(
+        "graphRange"
+      ) || "daily";
+
+    const selectedDate =
+      searchParams.get(
+        "selectedDate"
+      ) || "";
+
     const supplierId =
       searchParams.get("supplierId");
-
-    // NEW CHEQUE FILTERS
 
     const chequeSearch =
       searchParams.get(
@@ -50,34 +58,115 @@ export async function GET(req: Request) {
     // DATE FILTER
     // =========================================
 
-    const startDate = new Date();
+    const now = selectedDate
+      ? new Date(selectedDate)
+      : new Date();
+
+    let startDate: Date | null =
+      null;
+
+    let endDate: Date | null =
+      null;
+
+    // TODAY
 
     if (range === "today") {
+      startDate = new Date(now);
+
       startDate.setHours(
         0,
         0,
         0,
         0
       );
+
+      endDate = new Date(now);
+
+      endDate.setHours(
+        23,
+        59,
+        59,
+        999
+      );
     }
+
+    // WEEK
 
     if (range === "week") {
+      startDate = new Date(now);
+
       startDate.setDate(
-        startDate.getDate() - 7
+        now.getDate() - 7
+      );
+
+      startDate.setHours(
+        0,
+        0,
+        0,
+        0
+      );
+
+      endDate = new Date(now);
+
+      endDate.setHours(
+        23,
+        59,
+        59,
+        999
       );
     }
+
+    // MONTH
 
     if (range === "month") {
-      startDate.setMonth(
-        startDate.getMonth() - 1
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        1
+      );
+
+      endDate = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999
       );
     }
 
+    // YEAR
+
     if (range === "year") {
-      startDate.setFullYear(
-        startDate.getFullYear() - 1
+      startDate = new Date(
+        now.getFullYear(),
+        0,
+        1
+      );
+
+      endDate = new Date(
+        now.getFullYear(),
+        11,
+        31,
+        23,
+        59,
+        59,
+        999
       );
     }
+
+    // COMMON FILTER
+
+    const dateFilter =
+      startDate && endDate
+        ? {
+            createdAt: {
+              gte: startDate,
+              lte: endDate,
+            },
+          }
+        : {};
 
     // =========================================
     // REVENUE
@@ -86,15 +175,376 @@ export async function GET(req: Request) {
     const todaysPayments =
       await prisma.payment.aggregate({
         where: {
-          createdAt: {
-            gte: startDate,
-          },
+          ...dateFilter,
         },
 
         _sum: {
           amount: true,
         },
       });
+
+    // =========================================
+    // PROFIT CALCULATION
+    // =========================================
+
+    const billsForProfit =
+      await prisma.bill.findMany({
+        where: {
+          ...dateFilter,
+        },
+
+        include: {
+          billItems: {
+            include: {
+              item: true,
+            },
+          },
+        },
+      });
+
+    let totalProfit = 0;
+
+    billsForProfit.forEach((bill) => {
+      bill.billItems.forEach(
+        (billItem) => {
+          const sellingPrice =
+            Number(
+              billItem.unitPrice
+            );
+
+          const buyingPrice =
+            Number(
+              billItem.item
+                .buyingPrice
+            );
+
+          const profit =
+            (sellingPrice -
+              buyingPrice) *
+            billItem.quantity;
+
+          totalProfit += profit;
+        }
+      );
+    });
+
+    // =========================================
+    // PROFIT GRAPH
+    // =========================================
+
+    let profitGraph: any[] = [];
+
+    if (graphRange === "daily") {
+      for (let i = 1; i <= 30; i++) {
+        const dayStart =
+          new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            i,
+            0,
+            0,
+            0
+          );
+
+        const dayEnd =
+          new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            i,
+            23,
+            59,
+            59
+          );
+
+        const dailyBills =
+          await prisma.bill.findMany({
+            where: {
+              createdAt: {
+                gte: dayStart,
+                lte: dayEnd,
+              },
+            },
+
+            include: {
+              billItems: {
+                include: {
+                  item: true,
+                },
+              },
+            },
+          });
+
+        let dailyProfit = 0;
+
+        dailyBills.forEach(
+          (bill) => {
+            bill.billItems.forEach(
+              (billItem) => {
+                dailyProfit +=
+                  (Number(
+                    billItem.unitPrice
+                  ) -
+                    Number(
+                      billItem.item
+                        .buyingPrice
+                    )) *
+                  billItem.quantity;
+              }
+            );
+          }
+        );
+
+        profitGraph.push({
+          label: i.toString(),
+          profit: dailyProfit,
+        });
+      }
+    }
+
+    if (graphRange === "weekly") {
+      const days = [
+        "Sun",
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+      ];
+
+      for (
+        let i = 0;
+        i < 7;
+        i++
+      ) {
+        const day = new Date(now);
+
+        day.setDate(
+          now.getDate() -
+            now.getDay() +
+            i
+        );
+
+        const dayStart =
+          new Date(day);
+
+        dayStart.setHours(
+          0,
+          0,
+          0,
+          0
+        );
+
+        const dayEnd =
+          new Date(day);
+
+        dayEnd.setHours(
+          23,
+          59,
+          59,
+          999
+        );
+
+        const weeklyBills =
+          await prisma.bill.findMany({
+            where: {
+              createdAt: {
+                gte: dayStart,
+                lte: dayEnd,
+              },
+            },
+
+            include: {
+              billItems: {
+                include: {
+                  item: true,
+                },
+              },
+            },
+          });
+
+        let weeklyProfit = 0;
+
+        weeklyBills.forEach(
+          (bill) => {
+            bill.billItems.forEach(
+              (billItem) => {
+                weeklyProfit +=
+                  (Number(
+                    billItem.unitPrice
+                  ) -
+                    Number(
+                      billItem.item
+                        .buyingPrice
+                    )) *
+                  billItem.quantity;
+              }
+            );
+          }
+        );
+
+        profitGraph.push({
+          label: days[i],
+          profit: weeklyProfit,
+        });
+      }
+    }
+
+    if (graphRange === "monthly") {
+      const months = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+
+      for (
+        let i = 0;
+        i < 12;
+        i++
+      ) {
+        const monthStart =
+          new Date(
+            now.getFullYear(),
+            i,
+            1
+          );
+
+        const monthEnd =
+          new Date(
+            now.getFullYear(),
+            i + 1,
+            0,
+            23,
+            59,
+            59
+          );
+
+        const monthlyBills =
+          await prisma.bill.findMany({
+            where: {
+              createdAt: {
+                gte: monthStart,
+                lte: monthEnd,
+              },
+            },
+
+            include: {
+              billItems: {
+                include: {
+                  item: true,
+                },
+              },
+            },
+          });
+
+        let monthlyProfit = 0;
+
+        monthlyBills.forEach(
+          (bill) => {
+            bill.billItems.forEach(
+              (billItem) => {
+                monthlyProfit +=
+                  (Number(
+                    billItem.unitPrice
+                  ) -
+                    Number(
+                      billItem.item
+                        .buyingPrice
+                    )) *
+                  billItem.quantity;
+              }
+            );
+          }
+        );
+
+        profitGraph.push({
+          label: months[i],
+          profit: monthlyProfit,
+        });
+      }
+    }
+
+    if (graphRange === "yearly") {
+      const currentYear =
+        now.getFullYear();
+
+      for (
+        let year =
+          currentYear - 5;
+        year <= currentYear;
+        year++
+      ) {
+        const yearStart =
+          new Date(
+            year,
+            0,
+            1
+          );
+
+        const yearEnd =
+          new Date(
+            year,
+            11,
+            31,
+            23,
+            59,
+            59
+          );
+
+        const yearlyBills =
+          await prisma.bill.findMany({
+            where: {
+              createdAt: {
+                gte: yearStart,
+                lte: yearEnd,
+              },
+            },
+
+            include: {
+              billItems: {
+                include: {
+                  item: true,
+                },
+              },
+            },
+          });
+
+        let yearlyProfit = 0;
+
+        yearlyBills.forEach(
+          (bill) => {
+            bill.billItems.forEach(
+              (billItem) => {
+                yearlyProfit +=
+                  (Number(
+                    billItem.unitPrice
+                  ) -
+                    Number(
+                      billItem.item
+                        .buyingPrice
+                    )) *
+                  billItem.quantity;
+              }
+            );
+          }
+        );
+
+        profitGraph.push({
+          label:
+            year.toString(),
+          profit: yearlyProfit,
+        });
+      }
+    }
 
     // =========================================
     // OUTSTANDING DEBT
@@ -102,6 +552,10 @@ export async function GET(req: Request) {
 
     const totalBilled =
       await prisma.bill.aggregate({
+        where: {
+          ...dateFilter,
+        },
+
         _sum: {
           totalAmount: true,
         },
@@ -109,6 +563,10 @@ export async function GET(req: Request) {
 
     const totalPaid =
       await prisma.payment.aggregate({
+        where: {
+          ...dateFilter,
+        },
+
         _sum: {
           amount: true,
         },
@@ -116,10 +574,12 @@ export async function GET(req: Request) {
 
     const outstandingDebt =
       (Number(
-        totalBilled._sum.totalAmount
+        totalBilled._sum
+          .totalAmount
       ) || 0) -
-      (Number(totalPaid._sum.amount) ||
-        0);
+      (Number(
+        totalPaid._sum.amount
+      ) || 0);
 
     // =========================================
     // LOW STOCK ITEMS
@@ -158,85 +618,174 @@ export async function GET(req: Request) {
         },
       });
 
-    const debtorsMap = new Map<
-      string,
-      number
-    >();
+    const debtorsMap =
+      new Map<
+        string,
+        number
+      >();
 
-    unpaidBills.forEach((bill) => {
-      const paidSoFar =
-        bill.payments.reduce(
-          (sum, p) =>
-            sum + Number(p.amount),
-          0
-        );
+    unpaidBills.forEach(
+      (bill) => {
+        const paidSoFar =
+          bill.payments.reduce(
+            (sum, p) =>
+              sum +
+              Number(p.amount),
+            0
+          );
 
-      const debtForThisBill =
-        Number(bill.totalAmount) -
-        paidSoFar;
+        const debtForThisBill =
+          Number(
+            bill.totalAmount
+          ) - paidSoFar;
 
-      if (debtForThisBill > 0) {
-        const customerName =
-          bill.customer?.name ||
-          "Unknown";
+        if (
+          debtForThisBill > 0
+        ) {
+          const customerName =
+            bill.customer?.name ||
+            "Unknown";
 
-        const currentDebt =
-          debtorsMap.get(customerName) ||
-          0;
+          const currentDebt =
+            debtorsMap.get(
+              customerName
+            ) || 0;
 
-        debtorsMap.set(
-          customerName,
-          currentDebt + debtForThisBill
-        );
+          debtorsMap.set(
+            customerName,
+            currentDebt +
+              debtForThisBill
+          );
+        }
       }
-    });
+    );
 
-    const topDebtors = Array.from(
-      debtorsMap,
-      ([name, amount]) => ({
-        name,
-        amount,
-      })
-    )
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5);
+    const topDebtors =
+      Array.from(
+        debtorsMap,
+        ([name, amount]) => ({
+          name,
+          amount,
+        })
+      )
+        .sort(
+          (a, b) =>
+            b.amount -
+            a.amount
+        )
+        .slice(0, 5);
 
     // =========================================
-    // STOCK ADDITIONS REPORT
+    // SUPPLIER STOCK REPORT
     // =========================================
 
-    const stockAdditions =
-      await prisma.purchaseItem.findMany({
+    const purchaseOrders =
+      await prisma.purchaseOrder.findMany({
         where: {
-          purchaseOrder: {
-            createdAt: {
-              gte: startDate,
-            },
+          ...dateFilter,
 
-            ...(supplierId
-              ? {
-                  supplierId,
-                }
-              : {}),
-          },
+          ...(supplierId
+            ? {
+                supplierId,
+              }
+            : {}),
         },
 
         include: {
-          item: true,
+          supplier: true,
 
-          purchaseOrder: {
+          supplierPayments: {
             include: {
-              supplier: true,
+              supplierCheque: true,
+            },
+          },
+
+          purchaseItems: {
+            include: {
+              item: true,
             },
           },
         },
 
         orderBy: {
-          purchaseOrder: {
-            createdAt: "desc",
-          },
+          createdAt: "desc",
         },
       });
+
+    const stockAdditions =
+      purchaseOrders.map(
+        (order) => ({
+          id: order.id,
+
+          supplier: {
+            name:
+              order.supplier
+                .name,
+          },
+
+          purchaseOrder: {
+            billNumber:
+              order.orderNumber,
+
+            createdAt:
+              order.createdAt,
+
+            totalAmount:
+              Number(
+                order.totalAmount
+              ),
+
+            paymentMethod:
+              order.supplierPayments.some(
+                (payment) =>
+                  payment.method ===
+                  "CHEQUE"
+              )
+                ? "Cheque"
+                : "Cash",
+
+            paymentStatus:
+              order.supplierPayments.some(
+                (payment) =>
+                  payment.method ===
+                  "CHEQUE"
+              )
+                ? order.supplierPayments.every(
+                    (
+                      payment
+                    ) =>
+                      payment
+                        .supplierCheque
+                        ?.status ===
+                      "CLEARED"
+                  )
+                  ? "PAID"
+                  : "UNPAID"
+                : "PAID",
+
+            items:
+              order.purchaseItems.map(
+                (item) => ({
+                  id: item.id,
+
+                  quantity:
+                    item.quantity,
+
+                  buyingPrice:
+                    Number(
+                      item.unitCost
+                    ),
+
+                  item: {
+                    name:
+                      item.item
+                        .name,
+                  },
+                })
+              ),
+          },
+        })
+      );
 
     // =========================================
     // DAILY BILLS REPORT
@@ -245,9 +794,7 @@ export async function GET(req: Request) {
     const dailyBills =
       await prisma.bill.findMany({
         where: {
-          createdAt: {
-            gte: startDate,
-          },
+          ...dateFilter,
         },
 
         include: {
@@ -279,45 +826,53 @@ export async function GET(req: Request) {
         : {};
 
     const chequeReports =
-      await prisma.supplierCheque.findMany({
-        where: {
-          ...chequeDateWhere,
+      await prisma.supplierCheque.findMany(
+        {
+          where: {
+            ...chequeDateWhere,
 
-          OR: [
-            {
-              chequeNumber: {
-                contains:
-                  chequeSearch,
-                mode: "insensitive",
-              },
-            },
+            OR: [
+              {
+                chequeNumber: {
+                  contains:
+                    chequeSearch,
 
-            {
-              supplierPayment: {
-                supplier: {
-                  name: {
-                    contains:
-                      chequeSearch,
-                    mode: "insensitive",
-                  },
+                  mode:
+                    "insensitive",
                 },
               },
-            },
-          ],
-        },
 
-        include: {
-          supplierPayment: {
-            include: {
-              supplier: true,
+              {
+                supplierPayment:
+                  {
+                    supplier: {
+                      name: {
+                        contains:
+                          chequeSearch,
+
+                        mode:
+                          "insensitive",
+                      },
+                    },
+                  },
+              },
+            ],
+          },
+
+          include: {
+            supplierPayment: {
+              include: {
+                supplier: true,
+              },
             },
           },
-        },
 
-        orderBy: {
-          chequeDate: "desc",
-        },
-      });
+          orderBy: {
+            chequeDate:
+              "desc",
+          },
+        }
+      );
 
     // =========================================
     // SUPPLIERS LIST
@@ -340,8 +895,13 @@ export async function GET(req: Request) {
       data: {
         todayRevenue:
           Number(
-            todaysPayments._sum.amount
+            todaysPayments
+              ._sum.amount
           ) || 0,
+
+        totalProfit,
+
+        profitGraph,
 
         outstandingDebt,
 
