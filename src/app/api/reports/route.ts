@@ -5,9 +5,14 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await getServerSession(
+      authOptions
+    );
 
-    if (!session || session.user.role !== "ADMIN") {
+    if (
+      !session ||
+      session.user.role !== "ADMIN"
+    ) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
@@ -18,13 +23,28 @@ export async function GET(req: Request) {
     // FILTERS
     // =========================================
 
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(
+      req.url
+    );
 
     const range =
-      searchParams.get("range") || "today";
+      searchParams.get("range") ||
+      "today";
 
     const supplierId =
       searchParams.get("supplierId");
+
+    // NEW CHEQUE FILTERS
+
+    const chequeSearch =
+      searchParams.get(
+        "chequeSearch"
+      ) || "";
+
+    const chequeDateFilter =
+      searchParams.get(
+        "chequeDate"
+      ) || "";
 
     // =========================================
     // DATE FILTER
@@ -33,7 +53,12 @@ export async function GET(req: Request) {
     const startDate = new Date();
 
     if (range === "today") {
-      startDate.setHours(0, 0, 0, 0);
+      startDate.setHours(
+        0,
+        0,
+        0,
+        0
+      );
     }
 
     if (range === "week") {
@@ -93,7 +118,8 @@ export async function GET(req: Request) {
       (Number(
         totalBilled._sum.totalAmount
       ) || 0) -
-      (Number(totalPaid._sum.amount) || 0);
+      (Number(totalPaid._sum.amount) ||
+        0);
 
     // =========================================
     // LOW STOCK ITEMS
@@ -234,6 +260,66 @@ export async function GET(req: Request) {
       });
 
     // =========================================
+    // CHEQUE REPORT
+    // =========================================
+
+    const chequeDateWhere =
+      chequeDateFilter
+        ? {
+            chequeDate: {
+              gte: new Date(
+                `${chequeDateFilter}T00:00:00`
+              ),
+
+              lte: new Date(
+                `${chequeDateFilter}T23:59:59`
+              ),
+            },
+          }
+        : {};
+
+    const chequeReports =
+      await prisma.supplierCheque.findMany({
+        where: {
+          ...chequeDateWhere,
+
+          OR: [
+            {
+              chequeNumber: {
+                contains:
+                  chequeSearch,
+                mode: "insensitive",
+              },
+            },
+
+            {
+              supplierPayment: {
+                supplier: {
+                  name: {
+                    contains:
+                      chequeSearch,
+                    mode: "insensitive",
+                  },
+                },
+              },
+            },
+          ],
+        },
+
+        include: {
+          supplierPayment: {
+            include: {
+              supplier: true,
+            },
+          },
+        },
+
+        orderBy: {
+          chequeDate: "desc",
+        },
+      });
+
+    // =========================================
     // SUPPLIERS LIST
     // =========================================
 
@@ -266,6 +352,8 @@ export async function GET(req: Request) {
         stockAdditions,
 
         dailyBills,
+
+        chequeReports,
 
         suppliers,
       },

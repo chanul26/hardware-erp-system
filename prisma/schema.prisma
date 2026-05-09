@@ -282,6 +282,9 @@ model SupplierCheque {
 
   chequeDate        DateTime
 
+  // NEW FIELD
+  passedDate        DateTime?
+
   status            ChequeStatus @default(PENDING)
 
   createdAt         DateTime     @default(now())
