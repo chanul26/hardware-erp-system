@@ -116,39 +116,43 @@ export default function ReportsPage() {
     loadSuppliers();
   }, []);
 
-  // --- FIX: The Loading Shield ---
-  // We must return a loading screen BEFORE we try to read data for charts or arrays
-  if (loading || !report) {
-    return (
-      <div className="flex h-[calc(100vh-8rem)] items-center justify-center">
-        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-          <p className="font-medium">Loading Business Analytics...</p>
-        </div>
+// CHART DATA
+const chartData = [
+  {
+    name: "Revenue",
+    amount: report?.todayRevenue || 0,
+  },
+  {
+    name: "Debt",
+    amount: report?.outstandingDebt || 0,
+  },
+];
+
+// FILTERED DEBTORS
+const filteredDebtors = useMemo(() => {
+  return (
+    report?.topDebtors?.filter((debtor) =>
+      debtor.name
+        .toLowerCase()
+        .includes(debtorSearch.toLowerCase())
+    ) || []
+  );
+}, [report, debtorSearch]);
+
+// --- FIX: The Loading Shield ---
+if (loading || !report) {
+  return (
+    <div className="flex h-[calc(100vh-8rem)] items-center justify-center">
+      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+
+        <p className="font-medium">
+          Loading Business Analytics...
+        </p>
       </div>
-    );
-  }
-
-  // CHART DATA
-  const chartData = [
-    {
-      name: "Revenue",
-      amount: report.todayRevenue, // Safe because report is guaranteed to exist now
-    },
-    {
-      name: "Debt",
-      amount: report.outstandingDebt,
-    },
-  ];
-
-  // FILTERED DEBTORS
-  const filteredDebtors = useMemo(() => {
-    return (
-      report.topDebtors.filter((debtor) =>
-        debtor.name.toLowerCase().includes(debtorSearch.toLowerCase())
-      ) || []
-    );
-  }, [report, debtorSearch]);
+    </div>
+  );
+}
 
   // FILTERED SUPPLIERS
   const filteredSuppliers = suppliers.filter((supplier) =>
