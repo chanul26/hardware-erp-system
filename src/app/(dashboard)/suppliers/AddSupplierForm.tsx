@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, X } from "lucide-react";
 
-export default function AddSupplierForm() {
+export default function AddSupplierForm({ onSuccess }: { onSuccess?: () => void }) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -43,6 +43,7 @@ export default function AddSupplierForm() {
       }
 
       setIsOpen(false);
+      if (onSuccess) onSuccess();
       router.refresh(); 
     } catch (err) {
       // Proper TypeScript error handling

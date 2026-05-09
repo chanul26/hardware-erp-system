@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     } = body;
 
     // 2. Validation
-    if (!barcode || !name || !buyingPrice || !sellingPrice) {
+    if (!barcode || !name || buyingPrice === undefined || sellingPrice === undefined) {
       return NextResponse.json(
         { error: "Barcode, Name, Buying Price, and Selling Price are required." },
         { status: 400 }
