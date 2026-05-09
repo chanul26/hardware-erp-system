@@ -65,7 +65,7 @@ export default function SuppliersPage() {
             Manage vendors and track your accounts payable.
           </p>
         </div>
-        <AddSupplierForm />
+        <AddSupplierForm onSuccess={loadSuppliers} />
       </div>
 
       {message && (
