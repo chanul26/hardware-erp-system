@@ -10,10 +10,48 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   // Master Catalog State
   const [catalog, setCatalog] = useState(initialItems);
 
-  // Form State
-  const [supplierId, setSupplierId] = useState("");
-  const [amountPaid, setAmountPaid] = useState(""); 
-  const [loading, setLoading] = useState(false);
+// Form State
+const [supplierId, setSupplierId] =
+  useState("");
+
+const [amountPaid, setAmountPaid] =
+  useState("");
+
+const [loading, setLoading] =
+  useState(false);
+
+// PAYMENT STATES
+
+const [
+  paymentMethod,
+  setPaymentMethod,
+] = useState("CASH");
+
+const [cashAmount, setCashAmount] =
+  useState("");
+
+const [
+  chequeNumber,
+  setChequeNumber,
+] = useState("");
+
+const [bankName, setBankName] =
+  useState("");
+
+const [chequeDate, setChequeDate] =
+  useState("");
+
+// CHEQUE CHECKER
+
+const [
+  existingCheques,
+  setExistingCheques,
+] = useState<any[]>([]);
+
+const [
+  showChequeModal,
+  setShowChequeModal,
+] = useState(false);
 
   // ─── THE NEW MULTI-ITEM CART ───
   const [deliveryCart, setDeliveryCart] = useState<any[]>([]);
@@ -36,8 +74,22 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   const quantityInputRef = useRef<HTMLInputElement>(null);
   const costInputRef = useRef<HTMLInputElement>(null);
 
-  // Dynamic Math for the UI
-  const totalBillAmount = deliveryCart.reduce((sum, item) => sum + item.totalCost, 0);
+// Dynamic Math for the UI
+
+const totalBillAmount =
+  deliveryCart.reduce(
+    (sum, item) =>
+      sum + item.totalCost,
+    0
+  );
+
+// CHEQUE AMOUNT
+
+const chequeAmount =
+  paymentMethod === "CHEQUE"
+    ? totalBillAmount
+    : totalBillAmount -
+      Number(cashAmount || 0);
 
   // ─── SCANNER LOGIC ────────────────────────────────────────────────────────
   const handleScannerInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -133,6 +185,39 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
       setRegisteringItem(false);
     }
   };
+  // ─── CHECK EXISTING CHEQUES ─────────────────────────────────────────────
+
+const checkChequeAvailability =
+  async () => {
+    if (!chequeDate) {
+      alert(
+        "Please select cheque date"
+      );
+
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/cheques/by-date?date=${chequeDate}`
+      );
+
+      const data =
+        await res.json();
+
+      setExistingCheques(
+        data.data || []
+      );
+
+      setShowChequeModal(true);
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Failed to check cheques"
+      );
+    }
+  };
 
   // ─── SUBMIT THE BILL ──────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
@@ -145,6 +230,40 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
       alert("Please select a supplier.");
       return;
     }
+    // VALIDATE CHEQUE DETAILS
+
+    if (
+      paymentMethod !== "CASH"
+    ) {
+      if (
+        !chequeNumber ||
+        !bankName ||
+        !chequeDate
+      ) {
+        alert(
+          "Please fill all cheque details."
+        );
+
+        return;
+      }
+    }
+
+    // VALIDATE MIXED PAYMENT
+
+    if (
+      paymentMethod === "MIXED"
+    ) {
+      if (
+        Number(cashAmount) >=
+        totalBillAmount
+      ) {
+        alert(
+          "Cash amount should be less than total bill."
+        );
+
+        return;
+      }
+    }
     
     setLoading(true);
 
@@ -154,14 +273,54 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           supplierId,
-          items: deliveryCart.map(item => ({
-            itemId: item.itemId,
-            quantity: item.quantity,
-            unitCost: item.unitCost
-          })),
-          amountPaid 
+
+          items: deliveryCart.map(
+            (item) => ({
+              itemId: item.itemId,
+              quantity: item.quantity,
+              unitCost: item.unitCost,
+            })
+          ),
+
+          // PAYMENT METHOD
+
+          paymentMethod,
+
+          // CASH PAID
+
+          amountPaid:
+            paymentMethod === "CASH"
+              ? Number(
+                  cashAmount ||
+                    totalBillAmount
+                )
+              : paymentMethod === "MIXED"
+              ? Number(cashAmount || 0)
+              : 0,
+
+          // CHEQUE DATA
+
+          chequeNumber:
+            paymentMethod !== "CASH"
+              ? chequeNumber
+              : null,
+
+          bankName:
+            paymentMethod !== "CASH"
+              ? bankName
+              : null,
+
+          chequeDate:
+            paymentMethod !== "CASH"
+              ? chequeDate
+              : null,
+
+          chequeAmount:
+            paymentMethod !== "CASH"
+              ? chequeAmount
+              : 0,
         }),
-      });
+        });
 
       if (!response.ok) throw new Error("Failed to restock");
 
@@ -169,8 +328,22 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
       
       // Reset Entire Form
       setDeliveryCart([]);
+
       setSupplierId("");
+
       setAmountPaid("");
+
+      setCashAmount("");
+
+      setChequeNumber("");
+
+      setBankName("");
+
+      setChequeDate("");
+
+      setPaymentMethod("CASH");
+
+router.refresh();
       router.refresh(); 
       setTimeout(() => searchInputRef.current?.focus(), 100);
       
@@ -182,10 +355,22 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     }
   };
 
-  const filteredCatalog = searchInput.length > 0 
-    ? catalog.filter(i => i.name.toLowerCase().includes(searchInput.toLowerCase()) || i.barcode.includes(searchInput)).slice(0, 5)
+const filteredCatalog =
+  searchInput.trim().length > 0
+    ? catalog
+        .filter(
+          (item) =>
+            item.name
+              .toLowerCase()
+              .includes(
+                searchInput.toLowerCase()
+              ) ||
+            item.barcode.includes(
+              searchInput
+            )
+        )
+        .slice(0, 5)
     : [];
-
   return (
     <>
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border max-w-4xl mx-auto">
@@ -327,35 +512,197 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
           </table>
         </div>
 
-        {/* ── FINANCIAL BLOCK ── */}
+        /* ── FINANCIAL BLOCK ── */
+
         <div className="border-t border-gray-200 pt-6 mb-6">
-            <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-4"><Calculator className="h-4 w-4"/> Supplier Payment Details</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Total Bill from Supplier</label>
-                    <div className="w-full border border-gray-300 bg-white rounded-md p-2.5 font-bold text-gray-900 text-lg">
-                        Rs. {totalBillAmount.toFixed(2)}
-                    </div>
-                </div>
-                <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Amount Paid Now (Cash/Cheque)</label>
-                    <input 
-                        type="number" 
-                        min="0" 
-                        step="0.01" 
-                        value={amountPaid} 
-                        onChange={(e) => setAmountPaid(e.target.value)} 
-                        className={`w-full border rounded-md p-2.5 focus:ring-blue-500 focus:border-blue-500 font-medium ${amountPaid && Number(amountPaid) < totalBillAmount ? "border-orange-400 bg-orange-50 text-orange-800" : "border-gray-300 bg-white"}`}
-                        placeholder={`e.g. ${totalBillAmount.toFixed(2)} (Leave blank if fully paid)`} 
-                    />
-                    {amountPaid && Number(amountPaid) < totalBillAmount && (
-                        <p className="text-xs text-orange-700 font-bold mt-1.5 flex justify-between">
-                            <span>Debt to be logged:</span>
-                            <span>Rs. {(totalBillAmount - Number(amountPaid)).toFixed(2)}</span>
-                        </p>
-                    )}
-                </div>
+          <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-4">
+            <Calculator className="h-4 w-4" />
+            Supplier Payment Details
+          </h3>
+
+          <div className="bg-gray-50 p-5 rounded-xl border border-gray-200 space-y-5">
+
+            {/* TOTAL */}
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Total Supplier Bill
+              </label>
+
+              <div className="w-full border border-gray-300 bg-white rounded-md p-3 font-bold text-gray-900 text-xl">
+                Rs. {totalBillAmount.toFixed(2)}
+              </div>
             </div>
+
+            {/* PAYMENT METHOD */}
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Payment Method
+              </label>
+
+              <select
+                value={paymentMethod}
+                onChange={(e) =>
+                  setPaymentMethod(
+                    e.target.value
+                  )
+                }
+                className="w-full border border-gray-300 rounded-md p-2.5"
+              >
+                <option value="CASH">
+                  Cash
+                </option>
+
+                <option value="CHEQUE">
+                  Cheque
+                </option>
+
+                <option value="MIXED">
+                  Cash + Cheque
+                </option>
+              </select>
+            </div>
+
+            {/* CASH SECTION */}
+
+            {(
+              paymentMethod === "MIXED") && (
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Amount Paid by Cash
+                </label>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cashAmount}
+                  onChange={(e) =>
+                    setCashAmount(
+                      e.target.value
+                    )
+                  }
+                  className="w-full border border-gray-300 rounded-md p-2.5"
+                  placeholder="Enter cash amount"
+                />
+              </div>
+            )}
+
+            {/* CHEQUE SECTION */}
+
+            {(paymentMethod === "CHEQUE" ||
+              paymentMethod === "MIXED") && (
+              <div className="space-y-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
+
+                {/* CHEQUE AMOUNT */}
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Cheque Amount
+                  </label>
+
+                  <div className="w-full border border-blue-300 bg-white rounded-md p-3 font-bold text-blue-700">
+                    Rs.{" "}
+                    {chequeAmount.toFixed(2)}
+                  </div>
+                </div>
+
+                {/* CHEQUE NUMBER */}
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Cheque Number
+                  </label>
+
+                  <input
+                    type="text"
+                    value={chequeNumber}
+                    onChange={(e) =>
+                      setChequeNumber(
+                        e.target.value
+                      )
+                    }
+                    className="w-full border border-gray-300 rounded-md p-2.5"
+                    placeholder="Enter cheque number"
+                  />
+                </div>
+
+                {/* BANK */}
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Bank Name
+                  </label>
+
+                  <input
+                    type="text"
+                    value={bankName}
+                    onChange={(e) =>
+                      setBankName(
+                        e.target.value
+                      )
+                    }
+                    className="w-full border border-gray-300 rounded-md p-2.5"
+                    placeholder="Enter bank name"
+                  />
+                </div>
+
+                {/* DATE */}
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Cheque Date
+                  </label>
+
+                  <input
+                    type="date"
+                    value={chequeDate}
+                    onChange={(e) =>
+                      setChequeDate(
+                        e.target.value
+                      )
+                    }
+                    className="w-full border border-gray-300 rounded-md p-2.5"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={
+                      checkChequeAvailability
+                    }
+                    className="text-blue-600 text-sm mt-2 underline hover:text-blue-800"
+                  >
+                    Check other cheques available on this day
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* DEBT */}
+
+            {(paymentMethod === "CASH" &&
+              Number(cashAmount) <
+                totalBillAmount) ||
+            paymentMethod === "CHEQUE" ||
+            paymentMethod === "MIXED" ? (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <p className="text-sm font-medium text-orange-700 flex justify-between">
+                  <span>
+                    Remaining Supplier Debt
+                  </span>
+
+                  <span>
+                    Rs.{" "}
+                    {(
+                      totalBillAmount -
+                      Number(cashAmount || 0)
+                    ).toFixed(2)}
+                  </span>
+                </p>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <button type="submit" disabled={loading || deliveryCart.length === 0} className="w-full bg-blue-600 text-white font-medium py-3 rounded-md hover:bg-blue-700 transition disabled:opacity-50">
@@ -406,6 +753,131 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
           </div>
         </div>
       )}
+
+      {/* ── CHEQUE AVAILABILITY MODAL ── */}
+
+{showChequeModal && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+
+    <div className="bg-white w-full max-w-2xl rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+
+      {/* HEADER */}
+
+      <div className="flex items-center justify-between p-5 border-b bg-gray-50">
+
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">
+            Existing Cheques
+          </h2>
+
+          <p className="text-sm text-gray-500 mt-1">
+            Cheques scheduled on selected date
+          </p>
+        </div>
+
+        <button
+          onClick={() =>
+            setShowChequeModal(false)
+          }
+          className="text-gray-500 hover:text-black"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* BODY */}
+
+      <div className="p-5">
+
+        {existingCheques.length === 0 ? (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center">
+
+            <h3 className="text-green-700 font-bold text-lg">
+              This date is safe
+            </h3>
+
+            <p className="text-green-600 text-sm mt-2">
+              No other cheques are scheduled on this date.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+
+            <table className="w-full text-sm">
+
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="p-3 text-left">
+                    Supplier
+                  </th>
+
+                  <th className="p-3 text-left">
+                    Bank
+                  </th>
+
+                  <th className="p-3 text-left">
+                    Amount
+                  </th>
+
+                  <th className="p-3 text-left">
+                    Cheque No
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+
+                {existingCheques.map(
+                  (cheque) => (
+                    <tr
+                      key={cheque.id}
+                      className="border-t"
+                    >
+                      <td className="p-3">
+                        {
+                          cheque.supplierName
+                        }
+                      </td>
+
+                      <td className="p-3">
+                        {cheque.bank}
+                      </td>
+
+                      <td className="p-3 font-semibold text-blue-700">
+                        Rs.{" "}
+                        {cheque.amount}
+                      </td>
+
+                      <td className="p-3">
+                        {
+                          cheque.chequeNumber
+                        }
+                      </td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* FOOTER */}
+
+      <div className="p-5 border-t bg-gray-50 flex justify-end">
+
+        <button
+          onClick={() =>
+            setShowChequeModal(false)
+          }
+          className="px-5 py-2 border rounded-lg hover:bg-gray-100"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
     </>
   );
 }

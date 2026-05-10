@@ -1,99 +1,355 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma"; // Use the global prisma instance
 
-export async function POST(req: Request) {
+import { prisma } from "@/lib/prisma";
+
+export async function POST(
+  req: Request
+) {
   try {
     const body = await req.json();
-    const { supplierId, items, notes, amountPaid } = body;
 
-    if (!supplierId || !items || items.length === 0) {
+    const {
+      supplierId,
+      items,
+      notes,
+
+      amountPaid,
+
+      paymentMethod,
+
+      chequeNumber,
+      chequeDate,
+      chequeAmount,
+      bankName,
+    } = body;
+
+    if (
+      !supplierId ||
+      !items ||
+      items.length === 0
+    ) {
       return NextResponse.json(
-        { error: "Supplier ID and at least one item are required." },
-        { status: 400 }
+        {
+          error:
+            "Supplier ID and items are required.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    const totalAmount = items.reduce(
-      (sum: number, item: any) => sum + item.quantity * item.unitCost,
-      0
-    );
+    const totalAmount =
+      items.reduce(
+        (
+          sum: number,
+          item: any
+        ) =>
+          sum +
+          item.quantity *
+            item.unitCost,
+        0
+      );
 
-    const finalAmountPaid = amountPaid !== undefined && amountPaid !== "" ? Number(amountPaid) : totalAmount;
-    
-    let paymentStatus = "UNPAID";
-    if (finalAmountPaid >= totalAmount) {
-        paymentStatus = "PAID";
-    } else if (finalAmountPaid > 0) {
-        paymentStatus = "PARTIAL";
+    const finalAmountPaid =
+      amountPaid !==
+        undefined &&
+      amountPaid !== ""
+        ? Number(amountPaid)
+        : 0;
+
+    // PAYMENT STATUS
+
+    let paymentStatus =
+      "UNPAID";
+
+    if (
+      finalAmountPaid >=
+      totalAmount
+    ) {
+      paymentStatus = "PAID";
+    } else if (
+      finalAmountPaid > 0
+    ) {
+      paymentStatus =
+        "PARTIAL";
     }
 
-    // THE FIX: We use a sequential transaction to ensure we get the PO ID
-    // so we can attach the payment ledger directly to it.
-    const result = await prisma.$transaction(async (tx) => {
-      
-      // Step A: Create the Purchase Order
-      const po = await tx.purchaseOrder.create({
-        data: {
-          orderNumber: `RCV-${Date.now().toString().slice(-6)}`,
-          supplierId,
-          status: "RECEIVED", 
-          paymentStatus,      
-          totalAmount,        
-          amountPaid: finalAmountPaid, 
-          notes: notes || "Direct Inbound Restock",
-          receivedAt: new Date(),
-          purchaseItems: {
-            create: items.map((item: any) => ({
-              itemId: item.itemId,
-              quantity: item.quantity,
-              unitCost: item.unitCost,
-              totalCost: item.quantity * item.unitCost,
-              receivedQty: item.quantity, 
-            })),
-          },
-        },
-      });
+    const result =
+      await prisma.$transaction(
+        async (tx) => {
+          // CREATE PURCHASE ORDER
 
-      // Step B: THE MISSING LEDGER LOGIC
-      // If Uncle paid anything upfront, log it in the SupplierPayment ledger!
-      if (finalAmountPaid > 0) {
-        await tx.supplierPayment.create({
-          data: {
-            purchaseOrderId: po.id,
-            supplierId: supplierId,
-            amount: finalAmountPaid,
-            method: "CASH"
+          const po =
+            await tx.purchaseOrder.create(
+              {
+                data: {
+                  orderNumber: `RCV-${Date.now()
+                    .toString()
+                    .slice(-6)}`,
+
+                  supplierId,
+
+                  status:
+                    "RECEIVED",
+
+                  paymentStatus,
+
+                  totalAmount,
+
+                  amountPaid:
+                    finalAmountPaid,
+
+                  notes:
+                    notes ||
+                    "Direct Inbound Restock",
+
+                  receivedAt:
+                    new Date(),
+
+                  purchaseItems:
+                    {
+                      create:
+                        items.map(
+                          (
+                            item: any
+                          ) => ({
+                            itemId:
+                              item.itemId,
+
+                            quantity:
+                              item.quantity,
+
+                            unitCost:
+                              item.unitCost,
+
+                            totalCost:
+                              item.quantity *
+                              item.unitCost,
+
+                            receivedQty:
+                              item.quantity,
+                          })
+                        ),
+                    },
+                },
+              }
+            );
+
+          // CASH PAYMENT
+
+          if (
+            paymentMethod ===
+              "CASH" &&
+            finalAmountPaid >
+              0
+          ) {
+            await tx.supplierPayment.create(
+              {
+                data: {
+                  purchaseOrderId:
+                    po.id,
+
+                  supplierId,
+
+                  amount:
+                    finalAmountPaid,
+
+                  method:
+                    "CASH",
+                },
+              }
+            );
           }
-        });
-      }
 
-      // Step C: Update Inventory and Auto-Update Cost Price
-      for (const item of items) {
-        await tx.item.update({
-          where: { id: item.itemId },
-          data: {
-            stockQty: {
-              increment: item.quantity,
-            },
-            buyingPrice: Number(item.unitCost), // <-- Phase 1: Auto-update cost floor
-          },
-        });
-      }
+          // CHEQUE PAYMENT
 
-      return po;
-    });
+          if (
+            paymentMethod ===
+            "CHEQUE"
+          ) {
+            const payment =
+              await tx.supplierPayment.create(
+                {
+                  data: {
+                    purchaseOrderId:
+                      po.id,
+
+                    supplierId,
+
+                    amount:
+                      Number(
+                        chequeAmount
+                      ),
+
+                    method:
+                      "CHEQUE",
+                  },
+                }
+              );
+
+            await tx.supplierCheque.create(
+              {
+                data: {
+                  supplierPaymentId:
+                    payment.id,
+
+                  chequeNumber,
+
+                  bank:
+                    bankName,
+
+                  amount:
+                    Number(
+                      chequeAmount
+                    ),
+
+                  chequeDate:
+                    new Date(
+                      chequeDate
+                    ),
+
+                  status:
+                    "PENDING",
+                },
+              }
+            );
+          }
+
+          // MIXED PAYMENT
+
+          if (
+            paymentMethod ===
+            "MIXED"
+          ) {
+            // CASH PART
+
+            if (
+              finalAmountPaid >
+              0
+            ) {
+              await tx.supplierPayment.create(
+                {
+                  data: {
+                    purchaseOrderId:
+                      po.id,
+
+                    supplierId,
+
+                    amount:
+                      finalAmountPaid,
+
+                    method:
+                      "CASH",
+                  },
+                }
+              );
+            }
+
+            // CHEQUE PART
+
+            const remainingCheque =
+              Number(
+                chequeAmount
+              );
+
+            if (
+              remainingCheque >
+              0
+            ) {
+              const payment =
+                await tx.supplierPayment.create(
+                  {
+                    data: {
+                      purchaseOrderId:
+                        po.id,
+
+                      supplierId,
+
+                      amount:
+                        remainingCheque,
+
+                      method:
+                        "CHEQUE",
+                    },
+                  }
+                );
+
+              await tx.supplierCheque.create(
+                {
+                  data: {
+                    supplierPaymentId:
+                      payment.id,
+
+                    chequeNumber,
+
+                    bank:
+                      bankName,
+
+                    amount:
+                      remainingCheque,
+
+                    chequeDate:
+                      new Date(
+                        chequeDate
+                      ),
+
+                    status:
+                      "PENDING",
+                  },
+                }
+              );
+            }
+          }
+
+          // UPDATE INVENTORY
+
+          for (const item of items) {
+            await tx.item.update({
+              where: {
+                id: item.itemId,
+              },
+
+              data: {
+                stockQty: {
+                  increment:
+                    item.quantity,
+                },
+
+                buyingPrice:
+                  Number(
+                    item.unitCost
+                  ),
+              },
+            });
+          }
+
+          return po;
+        }
+      );
 
     return NextResponse.json({
       success: true,
-      message: "Stock updated and supplier ledger recorded",
-      data: result, 
-    });
 
+      message:
+        "Stock updated successfully",
+
+      data: result,
+    });
   } catch (error: any) {
-    console.error("DIRECT RESTOCK ERROR:", error);
+    console.error(
+      "RESTOCK ERROR:",
+      error
+    );
+
     return NextResponse.json(
-      { error: "Failed to process restock transaction." },
-      { status: 500 }
+      {
+        error:
+          "Failed to process restock.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }
