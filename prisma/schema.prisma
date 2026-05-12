@@ -121,6 +121,7 @@ model Item {
 
   billItems     BillItem[]
   purchaseItems PurchaseItem[]
+  stockMovements StockMovement[]
 }
 
 model Bill {
@@ -184,6 +185,14 @@ enum ChequeStatus {
   CLEARED
   BOUNCED
   CANCELLED
+}
+enum StockMovementType {
+  SALE
+  PURCHASE
+  MIXING
+  DAMAGE
+  RETURN
+  ADJUSTMENT
 }
 
 model Cheque {
@@ -290,4 +299,20 @@ model SupplierCheque {
   createdAt         DateTime     @default(now())
 
   supplierPayment   SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
+}
+
+model StockMovement {
+  id        String   @id @default(uuid())
+
+  itemId    String
+
+  quantity  Int
+
+  type      StockMovementType
+
+  note      String?
+
+  createdAt DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
 }
