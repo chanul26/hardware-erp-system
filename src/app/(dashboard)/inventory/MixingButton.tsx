@@ -9,6 +9,7 @@ type Props = {
 export default function MixingButton({
   item,
 }: Props) {
+
   const [isOpen, setIsOpen] =
     useState(false);
 
@@ -21,29 +22,100 @@ export default function MixingButton({
   const [loading, setLoading] =
     useState(false);
 
+  // PURPOSES LIST
+
+  const [purposes, setPurposes] =
+    useState([
+      "Machine 1",
+      "Machine 2",
+      "Machine 3",
+      "Manual Mixing",
+    ]);
+
+  const [purpose, setPurpose] =
+    useState("");
+
+  const handlePurposeChange =
+    (
+      value: string
+    ) => {
+
+      // ADD NEW PURPOSE
+
+      if (
+        value === "__add_new__"
+      ) {
+
+        const newPurpose =
+          prompt(
+            "Enter new purpose"
+          );
+
+        if (
+          newPurpose &&
+          newPurpose.trim() !== ""
+        ) {
+
+          const cleanPurpose =
+            newPurpose.trim();
+
+          // ADD TO LIST
+
+          setPurposes((prev) => [
+            ...prev,
+            cleanPurpose,
+          ]);
+
+          // AUTO SELECT
+
+          setPurpose(
+            cleanPurpose
+          );
+        }
+
+        return;
+      }
+
+      setPurpose(value);
+    };
+
   const handleMixing =
     async () => {
+
       try {
+
         if (
-  quantity <= 0
-) {
-  alert(
-    "Quantity must be greater than 0"
-  );
+          quantity <= 0
+        ) {
 
-  return;
-}
+          alert(
+            "Quantity must be greater than 0"
+          );
 
-if (
-  quantity >
-  item.stockQty
-) {
-  alert(
-    `Only ${item.stockQty} ${item.unit} available in stock`
-  );
+          return;
+        }
 
-  return;
-}
+        if (
+          quantity >
+          item.stockQty
+        ) {
+
+          alert(
+            `Only ${item.stockQty} ${item.unit} available in stock`
+          );
+
+          return;
+        }
+
+        if (!purpose) {
+
+          alert(
+            "Please select a purpose"
+          );
+
+          return;
+        }
+
         setLoading(true);
 
         const response =
@@ -58,11 +130,14 @@ if (
               },
 
               body: JSON.stringify({
+
                 itemId: item.id,
 
                 quantity,
 
                 note,
+
+                purpose,
               }),
             }
           );
@@ -71,6 +146,7 @@ if (
           await response.json();
 
         if (!response.ok) {
+
           alert(
             data.error ||
               "Failed to process mixing"
@@ -86,13 +162,17 @@ if (
         setIsOpen(false);
 
         window.location.reload();
+
       } catch (error) {
+
         console.error(error);
 
         alert(
           "❌ Something went wrong"
         );
+
       } finally {
+
         setLoading(false);
       }
     };
@@ -113,6 +193,7 @@ if (
       {/* MODAL */}
 
       {isOpen && (
+
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
 
           <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
@@ -123,7 +204,10 @@ if (
 
             <div className="space-y-4">
 
+              {/* ITEM */}
+
               <div>
+
                 <p className="text-sm text-gray-500">
                   Item
                 </p>
@@ -133,11 +217,15 @@ if (
                 </p>
 
                 <p className="text-sm text-gray-500 mt-1">
-                    Available Stock: {item.stockQty} {item.unit}
+                  Available Stock: {item.stockQty} {item.unit}
                 </p>
+
               </div>
 
+              {/* QUANTITY */}
+
               <div>
+
                 <label className="block text-sm font-medium mb-1">
                   Quantity
                 </label>
@@ -155,9 +243,54 @@ if (
                   }
                   className="w-full border rounded-lg p-2"
                 />
+
               </div>
 
+              {/* PURPOSE */}
+
               <div>
+
+                <label className="block text-sm font-medium mb-1">
+                  Purpose
+                </label>
+
+                <select
+                  value={purpose}
+                  onChange={(e) =>
+                    handlePurposeChange(
+                      e.target.value
+                    )
+                  }
+                  className="w-full border rounded-lg p-2"
+                >
+
+                  <option value="">
+                    Select purpose
+                  </option>
+
+                  {purposes.map(
+                    (p) => (
+
+                    <option
+                      key={p}
+                      value={p}
+                    >
+                      {p}
+                    </option>
+                  ))}
+
+                  <option value="__add_new__">
+                    + Add New Purpose
+                  </option>
+
+                </select>
+
+              </div>
+
+              {/* NOTE */}
+
+              <div>
+
                 <label className="block text-sm font-medium mb-1">
                   Note
                 </label>
@@ -172,7 +305,10 @@ if (
                   placeholder="Optional note..."
                   className="w-full border rounded-lg p-2"
                 />
+
               </div>
+
+              {/* ACTIONS */}
 
               <div className="flex justify-end gap-2 pt-2">
 
@@ -192,12 +328,15 @@ if (
                   disabled={loading}
                   className="px-4 py-2 bg-orange-500 text-white rounded-lg disabled:opacity-50"
                 >
+
                   {loading
                     ? "Processing..."
                     : "Confirm Mixing"}
+
                 </button>
 
               </div>
+
             </div>
           </div>
         </div>

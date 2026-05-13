@@ -17,6 +17,18 @@ export default async function InventoryPage() {
         name: "asc",
       },
 
+      select: {
+        id: true,
+        barcode: true,
+        name: true,
+        category: true,
+        unit: true,
+        stockQty: true,
+        reorderLevel: true,
+        buyingPrice: true,
+        sellingPrice: true,
+      },
+
     });
 
   return (
