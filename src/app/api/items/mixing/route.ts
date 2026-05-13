@@ -5,13 +5,17 @@ import { prisma } from "@/lib/prisma";
 export async function POST(
   req: Request
 ) {
+
   try {
-    const body = await req.json();
+
+    const body =
+      await req.json();
 
     const {
       itemId,
       quantity,
       note,
+      purpose,
     } = body;
 
     // VALIDATION
@@ -21,6 +25,7 @@ export async function POST(
       !quantity ||
       quantity <= 0
     ) {
+
       return NextResponse.json(
         {
           error:
@@ -32,21 +37,38 @@ export async function POST(
       );
     }
 
+    // PURPOSE VALIDATION
+
+    if (!purpose) {
+
+      return NextResponse.json(
+        {
+          error:
+            "Please select a purpose",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     // FIND ITEM
 
     const item =
-      await prisma.item.findUnique(
-        {
-          where: {
-            id: itemId,
-          },
-        }
-      );
+      await prisma.item.findUnique({
+
+        where: {
+          id: itemId,
+        },
+
+      });
 
     if (!item) {
+
       return NextResponse.json(
         {
-          error: "Item not found",
+          error:
+            "Item not found",
         },
         {
           status: 404,
@@ -57,8 +79,10 @@ export async function POST(
     // CHECK STOCK
 
     if (
-      item.stockQty < quantity
+      item.stockQty <
+      quantity
     ) {
+
       return NextResponse.json(
         {
           error:
@@ -74,9 +98,11 @@ export async function POST(
 
     await prisma.$transaction(
       async (tx) => {
+
         // REDUCE STOCK
 
         await tx.item.update({
+
           where: {
             id: itemId,
           },
@@ -87,36 +113,46 @@ export async function POST(
                 quantity,
             },
           },
+
         });
 
-        // CREATE MOVEMENT
+        // CREATE STOCK MOVEMENT
 
-        await tx.stockMovement.create(
-          {
-            data: {
-              itemId,
+        await tx.stockMovement.create({
 
-              quantity:
-                -quantity,
+          data: {
 
-              type: "MIXING",
+            itemId,
 
-              note:
-                note ||
-                "Used for paint mixing",
-            },
-          }
-        );
+            quantity:
+              -quantity,
+
+            type: "MIXING",
+
+            purpose,
+
+            note:
+              note ||
+              "Used for paint mixing",
+
+          },
+
+        });
+
       }
     );
 
     return NextResponse.json({
+
       success: true,
 
       message:
         "Stock used for mixing successfully",
+
     });
+
   } catch (error) {
+
     console.error(error);
 
     return NextResponse.json(

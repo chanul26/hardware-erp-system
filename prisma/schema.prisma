@@ -121,6 +121,7 @@ model Item {
 
   billItems     BillItem[]
   purchaseItems PurchaseItem[]
+  stockMovements StockMovement[]
 }
 
 model Bill {
@@ -290,4 +291,21 @@ model SupplierCheque {
   createdAt         DateTime     @default(now())
 
   supplierPayment   SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
+}
+
+model StockMovement {
+  id         String   @id @default(uuid())
+
+  itemId     String
+  item       Item @relation(fields: [itemId], references: [id])
+
+  type       String
+  quantity   Int
+
+  note       String?
+
+  // NEW
+  purpose    String?
+
+  createdAt  DateTime @default(now())
 }

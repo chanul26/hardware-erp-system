@@ -11,6 +11,7 @@ type Props = {
   searchParams: Promise<{
     search?: string;
     date?: string;
+    purpose?: string;
     page?: string;
   }>;
 };
@@ -28,18 +29,29 @@ export default async function MixingHistoryPage({
   const date =
     params.date || "";
 
+  const purpose =
+    params.purpose || "";
+
   const currentPage =
     Number(params.page || "1");
 
   const ITEMS_PER_PAGE = 10;
 
+  const purposeOptions = [
+    "Machine 1",
+    "Machine 2",
+    "Machine 3",
+    "Manual Mixing",
+  ];
+
   const whereCondition: any = {
     type: "MIXING",
   };
 
-  // PRODUCT SEARCH
+  // SEARCH FILTER
 
   if (search) {
+
     whereCondition.item = {
       name: {
         contains: search,
@@ -78,7 +90,16 @@ export default async function MixingHistoryPage({
     };
   }
 
-  // TOTAL COUNT
+  // PURPOSE FILTER
+
+  if (purpose) {
+
+    whereCondition.purpose = {
+      equals: purpose,
+    };
+  }
+
+  // TOTAL ITEMS
 
   const totalItems =
     await prisma.stockMovement.count({
@@ -95,6 +116,7 @@ export default async function MixingHistoryPage({
 
   const mixingHistory =
     await prisma.stockMovement.findMany({
+
       where: whereCondition,
 
       include: {
@@ -114,6 +136,7 @@ export default async function MixingHistoryPage({
     });
 
   return (
+
     <div className="p-6 max-w-7xl mx-auto">
 
       {/* HEADER */}
@@ -134,7 +157,7 @@ export default async function MixingHistoryPage({
 
       <div className="bg-white border rounded-lg shadow-sm p-4 mb-6">
 
-        <form className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <form className="grid grid-cols-1 md:grid-cols-4 gap-4">
 
           {/* SEARCH */}
 
@@ -148,7 +171,7 @@ export default async function MixingHistoryPage({
               type="text"
               name="search"
               defaultValue={search}
-              placeholder="Search by product name..."
+              placeholder="Search by product..."
               className="w-full border rounded-md p-2"
             />
 
@@ -171,7 +194,41 @@ export default async function MixingHistoryPage({
 
           </div>
 
-          {/* BUTTON */}
+          {/* PURPOSE */}
+
+          <div>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Filter by Purpose
+            </label>
+
+            <select
+              name="purpose"
+              defaultValue={purpose}
+              className="w-full border rounded-md p-2"
+            >
+
+              <option value="">
+                All Purposes
+              </option>
+
+              {purposeOptions.map(
+                (item) => (
+
+                <option
+                  key={item}
+                  value={item}
+                >
+                  {item}
+                </option>
+
+              ))}
+
+            </select>
+
+          </div>
+
+          {/* BUTTONS */}
 
           <div className="flex items-end gap-2">
 
@@ -179,7 +236,7 @@ export default async function MixingHistoryPage({
               type="submit"
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition"
             >
-              Apply Filters
+              Apply
             </button>
 
             <Link
@@ -192,13 +249,14 @@ export default async function MixingHistoryPage({
           </div>
 
         </form>
+
       </div>
 
       {/* TABLE */}
 
-      <div className="bg-white border shadow-sm rounded-lg overflow-hidden">
+      <div className="bg-white border shadow-sm rounded-lg overflow-hidden overflow-x-auto">
 
-        <table className="w-full border-collapse text-left">
+        <table className="w-full border-collapse text-left min-w-[1000px]">
 
           <thead>
 
@@ -216,16 +274,16 @@ export default async function MixingHistoryPage({
                 Qty Used
               </th>
 
-              <th className="p-4 font-medium text-gray-600 text-right">
-                Selling Price
-              </th>
-
-              <th className="p-4 font-medium text-gray-600 text-right">
-                Cost Price
-              </th>
-
               <th className="p-4 font-medium text-gray-600">
-                Note
+                Purpose
+              </th>
+
+              <th className="p-4 font-medium text-gray-600 text-right">
+                Selling
+              </th>
+
+              <th className="p-4 font-medium text-gray-600 text-right">
+                Cost
               </th>
 
               <th className="p-4 font-medium text-gray-600">
@@ -233,6 +291,7 @@ export default async function MixingHistoryPage({
               </th>
 
             </tr>
+
           </thead>
 
           <tbody className="divide-y">
@@ -259,6 +318,19 @@ export default async function MixingHistoryPage({
                   )} {movement.item.unit}
                 </td>
 
+                {/* PURPOSE */}
+
+                <td className="p-4">
+
+                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+
+                    {movement.purpose ||
+                      "Not Set"}
+
+                  </span>
+
+                </td>
+
                 <td className="p-4 text-right">
                   Rs. {Number(
                     movement.item.sellingPrice
@@ -271,11 +343,7 @@ export default async function MixingHistoryPage({
                   ).toFixed(2)}
                 </td>
 
-                <td className="p-4 text-gray-600">
-                  {movement.note || "-"}
-                </td>
-
-                <td className="p-4 text-gray-500 text-sm">
+                <td className="p-4 text-gray-500 text-sm whitespace-nowrap">
                   {new Date(
                     movement.createdAt
                   ).toLocaleString()}
@@ -299,7 +367,9 @@ export default async function MixingHistoryPage({
             )}
 
           </tbody>
+
         </table>
+
       </div>
 
       {/* PAGINATION */}
@@ -312,14 +382,12 @@ export default async function MixingHistoryPage({
 
         <div className="flex gap-2">
 
-          {/* PREVIOUS */}
-
           {currentPage > 1 && (
 
             <Link
               href={`/mixing-history?page=${
                 currentPage - 1
-              }&search=${search}&date=${date}`}
+              }&search=${search}&date=${date}&purpose=${purpose}`}
               className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md transition"
             >
               ← Previous
@@ -327,14 +395,12 @@ export default async function MixingHistoryPage({
 
           )}
 
-          {/* NEXT */}
-
           {currentPage < totalPages && (
 
             <Link
               href={`/mixing-history?page=${
                 currentPage + 1
-              }&search=${search}&date=${date}`}
+              }&search=${search}&date=${date}&purpose=${purpose}`}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition"
             >
               Next →
@@ -345,6 +411,7 @@ export default async function MixingHistoryPage({
         </div>
 
       </div>
+
     </div>
   );
 }
