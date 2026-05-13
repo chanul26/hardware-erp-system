@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function AddItemForm() {
+type Props = {
+  onCancel: () => void;
+};
+
+export default function AddItemForm({
+  onCancel,
+}: Props) {
 
   const router = useRouter();
-
-  const [isOpen, setIsOpen] =
-    useState(false);
 
   const [loading, setLoading] =
     useState(false);
@@ -53,6 +56,7 @@ export default function AddItemForm() {
     }
 
     const data = {
+
       barcode:
         formData.get("barcode"),
 
@@ -111,9 +115,10 @@ export default function AddItemForm() {
         await response.json();
 
       if (!response.ok) {
+
         throw new Error(
           result.error ||
-            "Failed to add item"
+          "Failed to add item"
         );
       }
 
@@ -121,9 +126,9 @@ export default function AddItemForm() {
         "✅ Item successfully registered!"
       );
 
-      setIsOpen(false);
-
       router.refresh();
+
+      onCancel();
 
     } catch (error: any) {
 
@@ -137,48 +142,46 @@ export default function AddItemForm() {
     }
   };
 
-  // CLOSED BUTTON
-
-  if (!isOpen) {
-    return (
-      <button
-        onClick={() =>
-          setIsOpen(true)
-        }
-        className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
-      >
-        + Register New Item
-      </button>
-    );
-  }
-
   return (
-    <div className="bg-white p-6 rounded-lg shadow-sm border mb-8">
 
-      <div className="flex justify-between items-center mb-4">
+    <div className="bg-white p-6 rounded-lg shadow-sm border">
 
-        <h2 className="text-xl font-bold text-gray-800">
-          Register New Product
-        </h2>
+      {/* HEADER */}
+
+      <div className="flex justify-between items-center mb-6">
+
+        <div>
+
+          <h2 className="text-2xl font-bold text-gray-800">
+            Register New Product
+          </h2>
+
+          <p className="text-gray-500 text-sm mt-1">
+            Add new inventory items to the catalog.
+          </p>
+
+        </div>
 
         <button
-          onClick={() =>
-            setIsOpen(false)
-          }
-          className="text-gray-500 hover:text-gray-800"
+          onClick={onCancel}
+          className="text-gray-500 hover:text-gray-800 font-medium"
         >
           Cancel
         </button>
+
       </div>
+
+      {/* FORM */}
 
       <form
         onSubmit={handleSubmit}
-        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        className="grid grid-cols-1 md:grid-cols-2 gap-5"
       >
 
         {/* ITEM NAME */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Item Name *
           </label>
@@ -186,14 +189,16 @@ export default function AddItemForm() {
           <input
             name="name"
             required
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
             placeholder="e.g. Makita 18V Drill"
           />
+
         </div>
 
         {/* BARCODE */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Barcode / SKU *
           </label>
@@ -201,14 +206,16 @@ export default function AddItemForm() {
           <input
             name="barcode"
             required
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
             placeholder="e.g. MAK-001"
           />
+
         </div>
 
         {/* CATEGORY */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Category
           </label>
@@ -220,7 +227,7 @@ export default function AddItemForm() {
                 e.target.value
               )
             }
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
           >
 
             <option value="General">
@@ -248,6 +255,7 @@ export default function AddItemForm() {
             </option>
 
           </select>
+
         </div>
 
         {/* CUSTOM CATEGORY */}
@@ -268,22 +276,24 @@ export default function AddItemForm() {
                   e.target.value
                 )
               }
-              className="w-full border p-2 rounded-md mt-1"
+              className="w-full border p-3 rounded-md mt-1"
               placeholder="Enter new category"
             />
+
           </div>
         )}
 
         {/* UNIT */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Unit of Measure
           </label>
 
           <select
             name="unit"
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
           >
 
             <option value="pcs">
@@ -307,11 +317,13 @@ export default function AddItemForm() {
             </option>
 
           </select>
+
         </div>
 
         {/* BUYING PRICE */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Buying Price (Rs.) *
           </label>
@@ -321,13 +333,15 @@ export default function AddItemForm() {
             type="number"
             step="0.01"
             required
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
           />
+
         </div>
 
         {/* SELLING PRICE */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Selling Price (Rs.) *
           </label>
@@ -337,13 +351,15 @@ export default function AddItemForm() {
             type="number"
             step="0.01"
             required
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
           />
+
         </div>
 
         {/* REORDER LEVEL */}
 
         <div>
+
           <label className="block text-sm font-medium text-gray-700">
             Low Stock Alert Level
           </label>
@@ -352,8 +368,9 @@ export default function AddItemForm() {
             name="reorderLevel"
             type="number"
             defaultValue="5"
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
           />
+
         </div>
 
         {/* DESCRIPTION */}
@@ -366,25 +383,29 @@ export default function AddItemForm() {
 
           <input
             name="description"
-            className="w-full border p-2 rounded-md mt-1"
+            className="w-full border p-3 rounded-md mt-1"
           />
+
         </div>
 
         {/* SUBMIT */}
 
-        <div className="md:col-span-2 mt-2">
+        <div className="md:col-span-2 mt-3">
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700 transition disabled:opacity-50"
+            className="w-full bg-green-600 text-white py-3 rounded-md hover:bg-green-700 transition disabled:opacity-50 font-medium"
           >
+
             {loading
               ? "Saving..."
               : "Save to Catalog"}
+
           </button>
 
         </div>
+
       </form>
     </div>
   );
