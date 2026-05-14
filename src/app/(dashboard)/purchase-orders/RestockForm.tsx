@@ -61,6 +61,7 @@ const [
   const [stagedItem, setStagedItem] = useState<any | null>(null);
   const [stagedQuantity, setStagedQuantity] = useState("");
   const [stagedUnitCost, setStagedUnitCost] = useState("");
+  const [stagedSellingPrice,setStagedSellingPrice,] = useState("");
   
   // "Unknown Barcode" Modal State
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
@@ -92,54 +93,141 @@ const chequeAmount =
       Number(cashAmount || 0);
 
   // ─── SCANNER LOGIC ────────────────────────────────────────────────────────
-  const handleScannerInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const scannedCode = searchInput.trim();
-      if (!scannedCode) return;
+const handleScannerInput = (
+  e: React.KeyboardEvent<HTMLInputElement>
+) => {
 
-      const foundItem = catalog.find((i) => i.barcode === scannedCode);
+  if (e.key === "Enter") {
 
-      if (foundItem) {
-        setStagedItem(foundItem);
-        setSearchInput("");
-        setTimeout(() => quantityInputRef.current?.focus(), 100);
-      } else {
-        setNewItemBarcode(scannedCode);
-        setIsNewItemModalOpen(true);
-      }
+    e.preventDefault();
+
+    const scannedCode =
+      searchInput.trim();
+
+    if (!scannedCode) return;
+
+    const foundItem =
+      catalog.find(
+        (i) =>
+          i.barcode === scannedCode
+      );
+
+    if (foundItem) {
+
+      setStagedItem(foundItem);
+
+      setStagedSellingPrice(
+        String(
+          foundItem.sellingPrice || ""
+        )
+      );
+
+      setSearchInput("");
+
+      setTimeout(
+        () =>
+          quantityInputRef.current?.focus(),
+        100
+      );
+
+    } else {
+
+      setNewItemBarcode(
+        scannedCode
+      );
+
+      setIsNewItemModalOpen(
+        true
+      );
     }
-  };
+  }
+};
 
-  const handleManualSelect = (item: any) => {
+  const handleManualSelect = (
+    item: any
+  ) => {
+
     setStagedItem(item);
+
+    setStagedSellingPrice(
+      String(
+        item.sellingPrice || ""
+      )
+    );
+
     setSearchInput("");
-    setTimeout(() => quantityInputRef.current?.focus(), 100);
+
+    setTimeout(
+      () =>
+        quantityInputRef.current?.focus(),
+      100
+    );
   };
 
   // ─── ADD TO DELIVERY CART ─────────────────────────────────────────────────
-  const handleAddToDelivery = () => {
-    if (!stagedItem || !stagedQuantity || !stagedUnitCost) return;
+    const handleAddToDelivery =
+      () => {
 
-    const qty = Number(stagedQuantity);
-    const cost = Number(stagedUnitCost);
+        if (
+          !stagedItem ||
+          !stagedQuantity ||
+          !stagedUnitCost ||
+          !stagedSellingPrice
+        ) {
+          return;
+        }
 
-    setDeliveryCart([...deliveryCart, {
-      itemId: stagedItem.id,
-      name: stagedItem.name,
-      barcode: stagedItem.barcode,
-      quantity: qty,
-      unitCost: cost,
-      totalCost: qty * cost
-    }]);
+        const qty =
+          Number(stagedQuantity);
 
-    // Reset Staging Area
-    setStagedItem(null);
-    setStagedQuantity("");
-    setStagedUnitCost("");
-    setTimeout(() => searchInputRef.current?.focus(), 100);
-  };
+        const cost =
+          Number(stagedUnitCost);
 
+        const selling =
+          Number(
+            stagedSellingPrice
+          );
+
+        setDeliveryCart([
+          ...deliveryCart,
+
+          {
+            itemId:
+              stagedItem.id,
+
+            name:
+              stagedItem.name,
+
+            barcode:
+              stagedItem.barcode,
+
+            quantity: qty,
+
+            unitCost: cost,
+
+            sellingPrice:
+              selling,
+
+            totalCost:
+              qty * cost,
+          },
+        ]);
+
+        setStagedItem(null);
+
+        setStagedQuantity("");
+
+        setStagedUnitCost("");
+
+        setStagedSellingPrice("");
+
+        setTimeout(
+          () =>
+            searchInputRef.current?.focus(),
+          100
+        );
+      };
+    
   const removeFromCart = (index: number) => {
     const newCart = [...deliveryCart];
     newCart.splice(index, 1);
@@ -279,9 +367,12 @@ const checkChequeAvailability =
               itemId: item.itemId,
               quantity: item.quantity,
               unitCost: item.unitCost,
+
+              // IMPORTANT
+              sellingPrice:
+                Number(item.sellingPrice || 0),
             })
           ),
-
           // PAYMENT METHOD
 
           paymentMethod,
@@ -390,7 +481,7 @@ const filteredCatalog =
             <Barcode className="h-4 w-4"/> Scan Items into Shipment
           </h3>
           
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             
             <div className="col-span-1 md:col-span-2 relative">
               <label className="block text-xs font-medium text-blue-800 mb-1">Scanner Input</label>
@@ -443,33 +534,76 @@ const filteredCatalog =
               />
             </div>
 
-            <div className="col-span-1 flex gap-2">
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-blue-800 mb-1">Unit Cost (Rs.)</label>
-                <input 
+              <div className="col-span-1">
+                <label className="block text-xs font-medium text-blue-800 mb-1">
+                  Buying Price
+                </label>
+
+                <input
                   ref={costInputRef}
-                  type="number" 
-                  min="0" step="0.01" 
+                  type="number"
+                  min="0"
+                  step="0.01"
                   disabled={!stagedItem}
-                  value={stagedUnitCost} 
-                  onChange={(e) => setStagedUnitCost(e.target.value)} 
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddToDelivery(); }}}
-                  className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 disabled:opacity-50 text-sm" 
-                  placeholder="Cost" 
+                  value={stagedUnitCost}
+                  onChange={(e) =>
+                    setStagedUnitCost(
+                      e.target.value
+                    )
+                  }
+                  className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 disabled:opacity-50 text-sm"
+                  placeholder="Buying Price"
                 />
               </div>
-              <button 
-                type="button" 
-                onClick={handleAddToDelivery}
-                disabled={!stagedItem || !stagedQuantity || !stagedUnitCost}
-                className="h-10 px-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
-              >
-                <Plus className="h-5 w-5" />
-              </button>
+
+              <div className="col-span-1">
+                <label className="block text-xs font-medium text-blue-800 mb-1">
+                  Selling Price
+                </label>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  disabled={!stagedItem}
+                  value={stagedSellingPrice}
+                  onChange={(e) =>
+                    setStagedSellingPrice(
+                      e.target.value
+                    )
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+
+                      handleAddToDelivery();
+                    }
+                  }}
+                  className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 disabled:opacity-50 text-sm"
+                  placeholder="Selling Price"
+                />
+              </div>
+
+              <div className="col-span-1 flex items-end">
+                <button
+                  type="button"
+                  onClick={handleAddToDelivery}
+                  disabled={
+                    !stagedItem ||
+                    !stagedQuantity ||
+                    !stagedUnitCost ||
+                    !stagedSellingPrice
+                  }
+                  className="h-10 w-full bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
+                >
+                  <Plus className="h-5 w-5" />
+                </button>
+              </div>
+              
             </div>
 
           </div>
-        </div>
+       
 
         {/* ── THE DELIVERY CART TABLE ── */}
         <div className="border border-gray-200 rounded-lg overflow-hidden mb-6">
@@ -479,8 +613,11 @@ const filteredCatalog =
                 <th className="px-4 py-3 font-medium">Item Name</th>
                 <th className="px-4 py-3 font-medium">Barcode</th>
                 <th className="px-4 py-3 font-medium text-center">Qty</th>
-                <th className="px-4 py-3 font-medium text-right">Unit Cost</th>
-                <th className="px-4 py-3 font-medium text-right">Total Cost</th>
+                <th className="px-4 py-3 font-medium text-right">  Buying</th>
+
+                <th className="px-4 py-3 font-medium text-right">  Selling</th>
+
+                <th className="px-4 py-3 font-medium text-right">  Total Cost</th>
                 <th className="px-4 py-3 text-center"></th>
               </tr>
             </thead>
@@ -498,8 +635,11 @@ const filteredCatalog =
                     <td className="px-4 py-3 font-medium text-gray-900">{item.name}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">{item.barcode}</td>
                     <td className="px-4 py-3 text-center font-bold">{item.quantity}</td>
-                    <td className="px-4 py-3 text-right">Rs. {item.unitCost.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-blue-700">Rs. {item.totalCost.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right">  Rs. {item.unitCost.toFixed(2)}</td>
+
+                    <td className="px-4 py-3 text-right font-semibold text-green-700">  Rs. {item.sellingPrice.toFixed(2)}</td>
+
+                    <td className="px-4 py-3 text-right font-bold text-blue-700">  Rs. {item.totalCost.toFixed(2)}</td>
                     <td className="px-4 py-3 text-center">
                       <button type="button" onClick={() => removeFromCart(idx)} className="text-red-500 hover:text-red-700">
                         <Trash2 className="h-4 w-4" />

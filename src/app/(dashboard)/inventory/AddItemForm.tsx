@@ -44,6 +44,7 @@ export default function AddItemForm({
       selectedCategory ===
       "CUSTOM"
     ) {
+
       finalCategory =
         customCategory.trim() ||
         "General";
@@ -52,7 +53,8 @@ export default function AddItemForm({
     // FALLBACK
 
     if (!finalCategory) {
-      finalCategory = "General";
+      finalCategory =
+        "General";
     }
 
     const data = {
@@ -78,17 +80,12 @@ export default function AddItemForm({
         )
       ),
 
-      buyingPrice: Number(
-        formData.get(
-          "buyingPrice"
-        )
-      ),
+      // TEMPORARY DEFAULTS
+      // (Needed until full FIFO migration)
 
-      sellingPrice: Number(
-        formData.get(
-          "sellingPrice"
-        )
-      ),
+      buyingPrice: 0,
+
+      sellingPrice: 0,
     };
 
     try {
@@ -317,42 +314,6 @@ export default function AddItemForm({
             </option>
 
           </select>
-
-        </div>
-
-        {/* BUYING PRICE */}
-
-        <div>
-
-          <label className="block text-sm font-medium text-gray-700">
-            Buying Price (Rs.) *
-          </label>
-
-          <input
-            name="buyingPrice"
-            type="number"
-            step="0.01"
-            required
-            className="w-full border p-3 rounded-md mt-1"
-          />
-
-        </div>
-
-        {/* SELLING PRICE */}
-
-        <div>
-
-          <label className="block text-sm font-medium text-gray-700">
-            Selling Price (Rs.) *
-          </label>
-
-          <input
-            name="sellingPrice"
-            type="number"
-            step="0.01"
-            required
-            className="w-full border p-3 rounded-md mt-1"
-          />
 
         </div>
 
