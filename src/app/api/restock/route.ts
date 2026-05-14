@@ -5,10 +5,14 @@ import { prisma } from "@/lib/prisma";
 export async function POST(
   req: Request
 ) {
+
   try {
-    const body = await req.json();
+
+    const body =
+      await req.json();
 
     const {
+
       supplierId,
       items,
       notes,
@@ -21,6 +25,7 @@ export async function POST(
       chequeDate,
       chequeAmount,
       bankName,
+
     } = body;
 
     if (
@@ -28,6 +33,7 @@ export async function POST(
       !items ||
       items.length === 0
     ) {
+
       return NextResponse.json(
         {
           error:
@@ -38,6 +44,8 @@ export async function POST(
         }
       );
     }
+
+    // TOTAL
 
     const totalAmount =
       items.reduce(
@@ -50,6 +58,8 @@ export async function POST(
             item.unitCost,
         0
       );
+
+    // PAID AMOUNT
 
     const finalAmountPaid =
       amountPaid !==
@@ -67,74 +77,87 @@ export async function POST(
       finalAmountPaid >=
       totalAmount
     ) {
-      paymentStatus = "PAID";
+
+      paymentStatus =
+        "PAID";
+
     } else if (
       finalAmountPaid > 0
     ) {
+
       paymentStatus =
         "PARTIAL";
     }
 
+    // TRANSACTION
+
     const result =
       await prisma.$transaction(
         async (tx) => {
+
           // CREATE PURCHASE ORDER
 
           const po =
-            await tx.purchaseOrder.create(
-              {
-                data: {
-                  orderNumber: `RCV-${Date.now()
+            await tx.purchaseOrder.create({
+
+              data: {
+
+                orderNumber:
+                  `RCV-${Date.now()
                     .toString()
                     .slice(-6)}`,
 
-                  supplierId,
+                supplierId,
 
-                  status:
-                    "RECEIVED",
+                status:
+                  "RECEIVED",
 
-                  paymentStatus,
+                paymentStatus,
 
-                  totalAmount,
+                totalAmount,
 
-                  amountPaid:
-                    finalAmountPaid,
+                amountPaid:
+                  finalAmountPaid,
 
-                  notes:
-                    notes ||
-                    "Direct Inbound Restock",
+                notes:
+                  notes ||
+                  "Direct Inbound Restock",
 
-                  receivedAt:
-                    new Date(),
+                receivedAt:
+                  new Date(),
 
-                  purchaseItems:
-                    {
-                      create:
-                        items.map(
-                          (
-                            item: any
-                          ) => ({
-                            itemId:
-                              item.itemId,
+                purchaseItems: {
 
-                            quantity:
-                              item.quantity,
+                  create:
+                    items.map(
+                      (
+                        item: any
+                      ) => ({
 
-                            unitCost:
-                              item.unitCost,
+                        itemId:
+                          item.itemId,
 
-                            totalCost:
-                              item.quantity *
-                              item.unitCost,
+                        quantity:
+                          item.quantity,
 
-                            receivedQty:
-                              item.quantity,
-                          })
-                        ),
-                    },
+                        unitCost:
+                          item.unitCost,
+
+                        totalCost:
+                          item.quantity *
+                          item.unitCost,
+
+                        receivedQty:
+                          item.quantity,
+
+                      })
+                    ),
+
                 },
-              }
-            );
+
+              },
+
+            });
 
           // CASH PAYMENT
 
@@ -144,9 +167,104 @@ export async function POST(
             finalAmountPaid >
               0
           ) {
-            await tx.supplierPayment.create(
-              {
+
+            await tx.supplierPayment.create({
+
+              data: {
+
+                purchaseOrderId:
+                  po.id,
+
+                supplierId,
+
+                amount:
+                  finalAmountPaid,
+
+                method:
+                  "CASH",
+
+              },
+
+            });
+          }
+
+          // CHEQUE PAYMENT
+
+          if (
+            paymentMethod ===
+            "CHEQUE"
+          ) {
+
+            const payment =
+              await tx.supplierPayment.create({
+
                 data: {
+
+                  purchaseOrderId:
+                    po.id,
+
+                  supplierId,
+
+                  amount:
+                    Number(
+                      chequeAmount
+                    ),
+
+                  method:
+                    "CHEQUE",
+
+                },
+
+              });
+
+            await tx.supplierCheque.create({
+
+              data: {
+
+                supplierPaymentId:
+                  payment.id,
+
+                chequeNumber,
+
+                bank:
+                  bankName,
+
+                amount:
+                  Number(
+                    chequeAmount
+                  ),
+
+                chequeDate:
+                  new Date(
+                    chequeDate
+                  ),
+
+                status:
+                  "PENDING",
+
+              },
+
+            });
+          }
+
+          // MIXED PAYMENT
+
+          if (
+            paymentMethod ===
+            "MIXED"
+          ) {
+
+            // CASH PART
+
+            if (
+              finalAmountPaid >
+              0
+            ) {
+
+              await tx.supplierPayment.create({
+
+                data: {
+
                   purchaseOrderId:
                     po.id,
 
@@ -157,93 +275,10 @@ export async function POST(
 
                   method:
                     "CASH",
+
                 },
-              }
-            );
-          }
 
-          // CHEQUE PAYMENT
-
-          if (
-            paymentMethod ===
-            "CHEQUE"
-          ) {
-            const payment =
-              await tx.supplierPayment.create(
-                {
-                  data: {
-                    purchaseOrderId:
-                      po.id,
-
-                    supplierId,
-
-                    amount:
-                      Number(
-                        chequeAmount
-                      ),
-
-                    method:
-                      "CHEQUE",
-                  },
-                }
-              );
-
-            await tx.supplierCheque.create(
-              {
-                data: {
-                  supplierPaymentId:
-                    payment.id,
-
-                  chequeNumber,
-
-                  bank:
-                    bankName,
-
-                  amount:
-                    Number(
-                      chequeAmount
-                    ),
-
-                  chequeDate:
-                    new Date(
-                      chequeDate
-                    ),
-
-                  status:
-                    "PENDING",
-                },
-              }
-            );
-          }
-
-          // MIXED PAYMENT
-
-          if (
-            paymentMethod ===
-            "MIXED"
-          ) {
-            // CASH PART
-
-            if (
-              finalAmountPaid >
-              0
-            ) {
-              await tx.supplierPayment.create(
-                {
-                  data: {
-                    purchaseOrderId:
-                      po.id,
-
-                    supplierId,
-
-                    amount:
-                      finalAmountPaid,
-
-                    method:
-                      "CASH",
-                  },
-                }
-              );
+              });
             }
 
             // CHEQUE PART
@@ -257,60 +292,70 @@ export async function POST(
               remainingCheque >
               0
             ) {
+
               const payment =
-                await tx.supplierPayment.create(
-                  {
-                    data: {
-                      purchaseOrderId:
-                        po.id,
+                await tx.supplierPayment.create({
 
-                      supplierId,
-
-                      amount:
-                        remainingCheque,
-
-                      method:
-                        "CHEQUE",
-                    },
-                  }
-                );
-
-              await tx.supplierCheque.create(
-                {
                   data: {
-                    supplierPaymentId:
-                      payment.id,
 
-                    chequeNumber,
+                    purchaseOrderId:
+                      po.id,
 
-                    bank:
-                      bankName,
+                    supplierId,
 
                     amount:
                       remainingCheque,
 
-                    chequeDate:
-                      new Date(
-                        chequeDate
-                      ),
+                    method:
+                      "CHEQUE",
 
-                    status:
-                      "PENDING",
                   },
-                }
-              );
+
+                });
+
+              await tx.supplierCheque.create({
+
+                data: {
+
+                  supplierPaymentId:
+                    payment.id,
+
+                  chequeNumber,
+
+                  bank:
+                    bankName,
+
+                  amount:
+                    remainingCheque,
+
+                  chequeDate:
+                    new Date(
+                      chequeDate
+                    ),
+
+                  status:
+                    "PENDING",
+
+                },
+
+              });
             }
           }
 
-          // UPDATE INVENTORY
+          // UPDATE INVENTORY + CREATE FIFO BATCHES
 
           for (const item of items) {
+
+            // UPDATE ITEM STOCK
+
             await tx.item.update({
+
               where: {
                 id: item.itemId,
               },
 
               data: {
+
                 stockQty: {
                   increment:
                     item.quantity,
@@ -320,8 +365,47 @@ export async function POST(
                   Number(
                     item.unitCost
                   ),
+
+                // LATEST SELLING PRICE
+
+                sellingPrice:
+                  Number(
+                    item.sellingPrice
+                  ),
+
               },
+
             });
+
+            // CREATE PURCHASE BATCH
+
+            await tx.purchaseBatch.create({
+
+              data: {
+
+                itemId:
+                  item.itemId,
+
+                quantity:
+                  item.quantity,
+
+                remainingQty:
+                  item.quantity,
+
+                buyingPrice:
+                  Number(
+                    item.unitCost
+                  ),
+
+                sellingPrice:
+                  Number(
+                    item.sellingPrice
+                  ),
+
+              },
+
+            });
+
           }
 
           return po;
@@ -329,14 +413,18 @@ export async function POST(
       );
 
     return NextResponse.json({
+
       success: true,
 
       message:
         "Stock updated successfully",
 
       data: result,
+
     });
+
   } catch (error: any) {
+
     console.error(
       "RESTOCK ERROR:",
       error

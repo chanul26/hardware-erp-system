@@ -14,10 +14,14 @@ interface CatalogItem {
   sellingPrice: string;
   buyingPrice: string;
   stockQty: number;
+  cartKey: string;
+batchId: string;
 }
 
 // Phase 3: Cart items track cost and can have an override price
 interface CartItem {
+  cartKey: string;
+  batchId: string;
   id: string;
   name: string;
   price: number;
@@ -47,8 +51,8 @@ export default function BillingPage() {
   const [amountPaid, setAmountPaid] = useState<string>("");
 
   // Phase 3: Price override editing state
-  const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
-  const [editingPriceValue, setEditingPriceValue] = useState<string>("");
+const [editingPriceId, setEditingPriceId] =  useState<string | null>(null);
+
 
   // Customer state
   const [customerQuery, setCustomerQuery] = useState("");
@@ -105,53 +109,229 @@ export default function BillingPage() {
 
   // ─── Cart Functions ───────────────────────────────────────────────────────
 
-  const addToCart = (item: CatalogItem) => {
-    const price = parseFloat(item.sellingPrice);
-    const buyingPrice = parseFloat(item.buyingPrice); 
-    setCart((prev) => {
-      const existing = prev.find((i) => i.id === item.id);
-      if (existing) {
-        if (existing.quantity >= item.stockQty) return prev;
-        return prev.map((i) => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
+const addToCart = (item: CatalogItem) => {
+
+  const price =
+    parseFloat(item.sellingPrice);
+
+  const buyingPrice =
+    parseFloat(item.buyingPrice);
+
+ const cartKey = item.batchId;
+
+  setCart((prev) => {
+
+    // FIND SAME FIFO BATCH
+
+    const existing =
+      prev.find(
+        (cartItem) =>
+          cartItem.cartKey === cartKey
+      );
+
+    // IF EXISTS → INCREASE ONLY THAT BATCH
+
+    if (existing) {
+
+      if (
+        existing.quantity >=
+        item.stockQty
+      ) {
+        return prev;
       }
-      return [...prev, { id: item.id, name: item.name, price, buyingPrice, quantity: 1, maxStock: item.stockQty }];
-    });
-  };
 
-  const updateQuantity = (id: string, delta: number) => {
-    setCart((prev) => prev.map((item) => {
-      if (item.id === id) {
-        const newQty = item.quantity + delta;
-        if (newQty > 0 && newQty <= item.maxStock) return { ...item, quantity: newQty };
+      return prev.map((cartItem) =>
+
+        cartItem.cartKey === cartKey
+          ? {
+              ...cartItem,
+              quantity:
+                cartItem.quantity + 1,
+            }
+          : cartItem
+      );
+    }
+
+    // NEW FIFO BATCH ENTRY
+
+    return [
+      ...prev,
+      {
+        cartKey,
+        batchId: item.batchId,
+
+        id: item.id,
+
+        name: item.name,
+
+        price,
+
+        buyingPrice,
+
+        quantity: 1,
+
+        maxStock:
+          item.stockQty,
+      },
+    ];
+  });
+};;
+const updateQuantity = (
+  cartKey: string,
+  delta: number
+) => {
+
+  // DECREASE
+  if (delta < 0) {
+
+    setCart((prev) =>
+      prev
+        .map((item) => {
+
+          if (
+            item.cartKey === cartKey
+          ) {
+
+            const newQty =
+              item.quantity - 1;
+
+            if (newQty <= 0) {
+              return null;
+            }
+
+            return {
+              ...item,
+              quantity: newQty,
+            };
+          }
+
+          return item;
+        })
+        .filter(Boolean) as CartItem[]
+    );
+
+    return;
+  }
+
+  // INCREASE
+  setCart((prev) => {
+
+    const currentItem =
+      prev.find(
+        (item) =>
+          item.cartKey === cartKey
+      );
+
+    if (!currentItem)
+      return prev;
+
+    // CURRENT BATCH STILL HAS STOCK
+    if (
+      currentItem.quantity <
+      currentItem.maxStock
+    ) {
+
+      return prev.map((item) =>
+
+        item.cartKey === cartKey
+          ? {
+              ...item,
+              quantity:
+                item.quantity + 1,
+            }
+          : item
+      );
+    }
+
+    // FIND NEXT FIFO BATCH
+    const nextBatch =
+      catalog.find(
+        (catalogItem) =>
+          catalogItem.id ===
+            currentItem.id &&
+          catalogItem.batchId !==
+            currentItem.batchId
+      );
+
+    if (!nextBatch)
+      return prev;
+
+    const existingNext =
+      prev.find(
+        (item) =>
+          item.batchId ===
+          nextBatch.batchId
+      );
+
+    // NEXT BATCH ALREADY IN CART
+    if (existingNext) {
+
+      // STOP IF NEXT BATCH FULL
+      if (
+        existingNext.quantity >=
+        existingNext.maxStock
+      ) {
+        return prev;
       }
-      return item;
-    }));
+
+      return prev.map((item) =>
+
+        item.batchId ===
+        nextBatch.batchId
+          ? {
+              ...item,
+              quantity:
+                item.quantity + 1,
+            }
+          : item
+      );
+    }
+
+    // ADD NEW FIFO BATCH
+    return [
+      ...prev,
+      {
+        cartKey:
+          nextBatch.batchId,
+
+        batchId:
+          nextBatch.batchId,
+
+        id: nextBatch.id,
+
+        name: nextBatch.name,
+
+        price: parseFloat(
+          nextBatch.sellingPrice
+        ),
+
+        buyingPrice:
+          parseFloat(
+            nextBatch.buyingPrice
+          ),
+
+        quantity: 1,
+
+        maxStock:
+          nextBatch.stockQty,
+      },
+    ];
+  });
+};
+
+  const removeFromCart = (
+    cartKey: string
+  ) => {
+
+    setCart((prev) =>
+      prev.filter(
+        (item) =>
+          item.cartKey !== cartKey
+      )
+    );
   };
-
-  const removeFromCart = (id: string) => setCart((prev) => prev.filter((item) => item.id !== id));
-
   // ─── Phase 3: Price Override Functions ───────────────────────────────────
 
-  const startEditingPrice = (item: CartItem) => {
-    setEditingPriceId(item.id);
-    setEditingPriceValue(String(item.overridePrice ?? item.price));
-  };
-
-  const commitPriceOverride = (id: string) => {
-    const newPrice = parseFloat(editingPriceValue);
-    if (!isNaN(newPrice) && newPrice > 0) {
-      setCart(prev => prev.map(item =>
-        item.id === id ? { ...item, overridePrice: newPrice } : item
-      ));
-    }
-    setEditingPriceId(null);
-  };
-
-  const clearOverride = (id: string) => {
-    setCart(prev => prev.map(item =>
-      item.id === id ? { ...item, overridePrice: undefined } : item
-    ));
-  };
 
   // ─── Financial Math (all using effective prices) ──────────────────────────
 
@@ -275,7 +455,7 @@ export default function BillingPage() {
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {filteredCatalog.map((item) => (
                   <button
-                    key={item.id}
+                    key={item.cartKey}
                     onClick={() => addToCart(item)}
                     className="p-4 rounded-lg border hover:border-blue-500 hover:bg-blue-50 transition-all text-left"
                   >
@@ -323,8 +503,8 @@ export default function BillingPage() {
                 const hasOverride = item.overridePrice !== undefined;
 
                 return (
-                  <div
-                    key={item.id}
+                <div
+                  key={item.cartKey}
                     className={`p-2 rounded-lg border transition-colors ${isBelowCost ? "border-red-300 bg-red-50" : "border-transparent"}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -332,45 +512,91 @@ export default function BillingPage() {
                         <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
 
                         {editingPriceId === item.id ? (
-                          <div className="flex items-center gap-1 mt-1">
-                            <span className="text-xs text-muted-foreground">Rs.</span>
-                            <input
-                              type="number"
-                              autoFocus
-                              value={editingPriceValue}
-                              onChange={(e) => setEditingPriceValue(e.target.value)}
-                              onBlur={() => commitPriceOverride(item.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") commitPriceOverride(item.id);
-                                if (e.key === "Escape") setEditingPriceId(null);
+
+                          <div className="mt-1">
+
+                            <select
+                              value={item.price}
+                              onChange={(e) => {
+
+                                const selectedPrice =
+                                  Number(e.target.value);
+
+                                setCart((prev) =>
+                                  prev.map((cartItem) =>
+                                    cartItem.cartKey === item.cartKey
+                                      ? {
+                                          ...cartItem,
+                                          price: selectedPrice,
+                                        }
+                                      : cartItem
+                                  )
+                                );
+
+                                setEditingPriceId(null);
                               }}
-                              className="w-20 border border-blue-400 rounded px-1 py-0.5 text-xs font-bold"
-                            />
-                            <span className="text-xs text-muted-foreground">↵ to confirm</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <button
-                              onClick={() => startEditingPrice(item)}
-                              title="Click to correct sticker price for old stock"
-                              className={`text-xs font-bold underline decoration-dotted cursor-pointer hover:opacity-70 ${isBelowCost ? "text-red-600" : "text-muted-foreground"}`}
+                              className="text-xs border rounded px-2 py-1"
                             >
-                              Rs. {effectivePrice.toFixed(2)} ea
-                            </button>
-                            {hasOverride && (
-                              <button
-                                onClick={() => clearOverride(item.id)}
-                                className="text-[10px] text-blue-500 hover:text-blue-700"
-                              >
-                                (reset to Rs. {item.price.toFixed(2)})
-                              </button>
-                            )}
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                              isBelowCost ? "bg-red-200 text-red-800" : "bg-green-100 text-green-700"
-                            }`}>
-                              {isBelowCost ? `⚠ LOSS` : `+${itemMargin}%`}
-                            </span>
+
+                              {catalog
+                                .filter(
+                                  (catalogItem) =>
+                                    catalogItem.id === item.id
+                                )
+                                .map((batchItem) => (
+
+                                  <option
+                                    key={batchItem.cartKey}
+                                    value={batchItem.sellingPrice}
+                                  >
+
+                                    Rs.
+                                    {parseFloat(
+                                      batchItem.sellingPrice
+                                    ).toFixed(2)}
+                                    {" "}
+                                    ({batchItem.stockQty} pcs)
+
+                                  </option>
+                                ))}
+
+                            </select>
+
                           </div>
+
+                        ) : (
+
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+
+                            <span className="text-xs font-bold text-muted-foreground">
+                              Rs. {effectivePrice.toFixed(2)} ea
+                            </span>
+
+                            <button
+                              onClick={() =>
+                                setEditingPriceId(item.id)
+                              }
+                              className="text-[10px] px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                            >
+                              Edit
+                            </button>
+
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                                isBelowCost
+                                  ? "bg-red-200 text-red-800"
+                                  : "bg-green-100 text-green-700"
+                              }`}
+                            >
+
+                              {isBelowCost
+                                ? `LOSS`
+                                : `+${itemMargin}%`}
+
+                            </span>
+
+                          </div>
+
                         )}
 
                         {isBelowCost && (
@@ -382,18 +608,18 @@ export default function BillingPage() {
 
                       <div className="flex items-center gap-2 shrink-0">
                         <div className="flex items-center border border-border rounded-md bg-background">
-                          <button onClick={() => updateQuantity(item.id, -1)} className="p-1 hover:bg-muted text-muted-foreground">
+                          <button onClick={() => updateQuantity(item.cartKey, -1)} className="p-1 hover:bg-muted text-muted-foreground">
                             <Minus className="h-3 w-3" />
                           </button>
                           <span className="px-2 text-sm font-medium">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-muted text-muted-foreground">
+                          <button onClick={() => updateQuantity(item.cartKey, 1)} className="p-1 hover:bg-muted text-muted-foreground">
                             <Plus className="h-3 w-3" />
                           </button>
                         </div>
                         <span className="text-xs font-bold text-foreground w-16 text-right">
                           Rs. {(effectivePrice * item.quantity).toFixed(2)}
                         </span>
-                        <button onClick={() => removeFromCart(item.id)} className="text-destructive hover:opacity-70">
+                        <button onClick={() => removeFromCart(item.cartKey)} className="text-destructive hover:opacity-70">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
