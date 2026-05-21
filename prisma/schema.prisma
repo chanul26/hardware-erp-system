@@ -121,6 +121,8 @@ model Item {
 
   billItems     BillItem[]
   purchaseItems PurchaseItem[]
+  stockMovements StockMovement[]
+  purchaseBatches PurchaseBatch[]
 }
 
 model Bill {
@@ -319,4 +321,33 @@ model FinanceTransaction {
   borrowerId  String?
   borrower    Borrower? @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
+model StockMovement {
+  id         String   @id @default(uuid())
+
+  itemId     String
+  item       Item @relation(fields: [itemId], references: [id])
+
+  type       String
+  quantity   Int
+
+  note       String?
+
+  // NEW
+  purpose    String?
+
+  createdAt  DateTime @default(now())
+}
+model PurchaseBatch {
+  id            String   @id @default(uuid())
+
+  itemId        String
+  item          Item @relation(fields: [itemId], references: [id])
+
+  quantity      Int
+  remainingQty  Int
+
+  buyingPrice   Decimal  @db.Decimal(12, 2)
+  sellingPrice  Decimal  @db.Decimal(12, 2)
+
+  createdAt     DateTime @default(now())
 }
