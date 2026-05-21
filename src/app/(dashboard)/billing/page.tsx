@@ -51,8 +51,10 @@ export default function BillingPage() {
   const [amountPaid, setAmountPaid] = useState<string>("");
 
   // Phase 3: Price override editing state
-const [editingPriceId, setEditingPriceId] =  useState<string | null>(null);
+  const [editingPriceId, setEditingPriceId] =  useState<string | null>(null);
+  const [showBatchPopup, setShowBatchPopup] =useState(false);
 
+  const [batchSelectionItems, setBatchSelectionItems] =useState<CatalogItem[]>([]);
 
   // Customer state
   const [customerQuery, setCustomerQuery] = useState("");
@@ -73,19 +75,84 @@ const [editingPriceId, setEditingPriceId] =  useState<string | null>(null);
 
   // Hardware Scanner Hook
   useEffect(() => {
+
     let barcodeAccumulator = "";
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "SELECT") return;
+
+    const handleGlobalKeyDown = (
+      e: KeyboardEvent
+    ) => {
+
+      if (
+        document.activeElement?.tagName === "INPUT" ||
+        document.activeElement?.tagName === "SELECT"
+      ) {
+        return;
+      }
+
       if (e.key === "Enter") {
-        const item = catalog.find(i => i.barcode === barcodeAccumulator);
-        if (item) addToCart(item);
+
+        const matchingItems =
+          catalog.filter(
+            (i) =>
+              i.barcode ===
+              barcodeAccumulator
+          );
+
+        // NO MATCH
+        if (
+          matchingItems.length === 0
+        ) {
+
+          barcodeAccumulator = "";
+          return;
+        }
+
+        // SINGLE BATCH
+        if (
+          matchingItems.length === 1
+        ) {
+
+          addToCart(
+            matchingItems[0]
+          );
+
+          barcodeAccumulator = "";
+          return;
+        }
+
+        // MULTIPLE BATCHES
+        setBatchSelectionItems(
+          matchingItems
+        );
+
+        setShowBatchPopup(true);
+
         barcodeAccumulator = "";
-      } else {
-        if (/^[a-zA-Z0-9-]$/.test(e.key)) barcodeAccumulator += e.key;
+      }
+
+      else {
+
+        if (
+          /^[a-zA-Z0-9-]$/.test(e.key)
+        ) {
+
+          barcodeAccumulator +=
+            e.key;
+        }
       }
     };
-    window.addEventListener("keydown", handleGlobalKeyDown);
-    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+
+    window.addEventListener(
+      "keydown",
+      handleGlobalKeyDown
+    );
+
+    return () =>
+      window.removeEventListener(
+        "keydown",
+        handleGlobalKeyDown
+      );
+
   }, [catalog]);
 
   // Initial Catalog Load
@@ -454,16 +521,60 @@ const updateQuantity = (
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {filteredCatalog.map((item) => (
+
                   <button
                     key={item.cartKey}
-                    onClick={() => addToCart(item)}
+
+                    onClick={() => {
+
+                      const sameBarcodeItems =
+                        catalog.filter(
+                          (catalogItem) =>
+                            catalogItem.barcode ===
+                            item.barcode
+                        );
+
+                      // SHOW PRICE SELECTION POPUP
+                      if (
+                        sameBarcodeItems.length > 1
+                      ) {
+
+                        setBatchSelectionItems(
+                          sameBarcodeItems
+                        );
+
+                        setShowBatchPopup(true);
+
+                        return;
+                      }
+
+                      // NORMAL SINGLE PRICE ITEM
+                      addToCart(item);
+
+                    }}
+
                     className="p-4 rounded-lg border hover:border-blue-500 hover:bg-blue-50 transition-all text-left"
                   >
-                    <p className="font-bold text-sm truncate">{item.name}</p>
-                    <p className="text-xs text-gray-500">Stock: {item.stockQty}</p>
-                    <p className="text-sm font-black text-blue-600 mt-2">Rs. {parseFloat(item.sellingPrice).toFixed(2)}</p>
+
+                    <p className="font-bold text-sm truncate">
+                      {item.name}
+                    </p>
+
+                    <p className="text-xs text-gray-500">
+                      Stock: {item.stockQty}
+                    </p>
+
+                    <p className="text-sm font-black text-blue-600 mt-2">
+                      Rs.{" "}
+                      {parseFloat(
+                        item.sellingPrice
+                      ).toFixed(2)}
+                    </p>
+
                   </button>
+
                 ))}
+                
               </div>
             )}
           </div>
@@ -854,6 +965,82 @@ const updateQuantity = (
           </div>
         </div>
       )}
+    {showBatchPopup && (
+
+      <div className="fixed inset-0 z-[100] flex items-center justify-center">
+
+        <div className="bg-white border shadow-2xl rounded-xl p-4 w-[320px] animate-in fade-in zoom-in-95">
+
+          <h2 className="text-sm font-bold text-gray-800 mb-1">
+            Multiple Prices Available
+          </h2>
+
+          <p className="text-xs text-gray-500 mb-4">
+            Select selling price
+          </p>
+
+          <div className="space-y-2">
+
+            {batchSelectionItems.map((item) => (
+
+              <button
+                key={item.cartKey}
+                onClick={() => {
+
+                  addToCart(item);
+
+                  setShowBatchPopup(false);
+
+                  setBatchSelectionItems([]);
+
+                }}
+                className="w-full rounded-lg border px-3 py-3 hover:bg-blue-50 hover:border-blue-500 transition-all text-left"
+              >
+
+                <div className="flex items-center justify-between">
+
+                  <div>
+
+                    <p className="font-bold text-blue-600">
+                      Rs. {parseFloat(item.sellingPrice).toFixed(2)}
+                    </p>
+
+                    <p className="text-xs text-gray-500">
+                      Stock: {item.stockQty}
+                    </p>
+
+                  </div>
+
+                  <div className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                    Select
+                  </div>
+
+                </div>
+
+              </button>
+
+            ))}
+
+          </div>
+
+          <button
+            onClick={() => {
+
+              setShowBatchPopup(false);
+
+              setBatchSelectionItems([]);
+
+            }}
+            className="mt-3 w-full text-xs border rounded-lg py-2 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+
+        </div>
+
+      </div>
+
+    )}
     </>
   );
 }
