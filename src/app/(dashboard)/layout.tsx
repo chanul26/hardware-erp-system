@@ -26,6 +26,7 @@ const allNavItems = [
   { label: "Payments", href: "/payments", icon: CreditCard },
   { label: "Reports", href: "/reports", icon: BarChart3 },
   { label: "Staff Management", href: "/users", icon: Shield },
+  { label: "Finance Tracking", href: "/finance", icon: CreditCard }
 ];
 
 export default async function DashboardLayout({
