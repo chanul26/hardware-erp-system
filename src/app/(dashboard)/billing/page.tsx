@@ -184,7 +184,8 @@ const addToCart = (item: CatalogItem) => {
   const buyingPrice =
     parseFloat(item.buyingPrice);
 
- const cartKey = item.batchId;
+  // FIX: Combine item ID and batch ID. Fallback to 'legacy' if no batch exists.
+  const cartKey = `${item.id}-${item.batchId || 'legacy'}`;
 
   setCart((prev) => {
 
@@ -358,8 +359,8 @@ const updateQuantity = (
     return [
       ...prev,
       {
-        cartKey:
-          nextBatch.batchId,
+        // FIX: Ensure the next batch also generates a secure, unique key
+        cartKey: `${nextBatch.id}-${nextBatch.batchId || 'legacy'}`,
 
         batchId:
           nextBatch.batchId,
