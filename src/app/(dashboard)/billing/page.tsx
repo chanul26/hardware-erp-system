@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, CheckCircle2,
   Loader2, Printer, Barcode, UserCircle, X, AlertTriangle, TrendingUp
@@ -42,6 +43,8 @@ interface InvoiceData {
 }
 
 export default function BillingPage() {
+  const { data: session } = useSession();
+  
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [searchTerm, setSearchBase] = useState("");
   const [loadingCatalog, setLoadingCatalog] = useState(true);
@@ -72,6 +75,14 @@ export default function BillingPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [lastInvoice, setLastInvoice] = useState<InvoiceData | null>(null);
+
+  // Return Module State
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [returnInvoiceNumber, setReturnInvoiceNumber] = useState("");
+  const [fetchedBill, setFetchedBill] = useState<any | null>(null);
+  const [returnQuantities, setReturnQuantities] = useState<{ [itemId: string]: number }>({});
+  const [returnLoading, setReturnLoading] = useState(false);
+  const [returnError, setReturnError] = useState<string | null>(null);
 
   // Hardware Scanner Hook
   useEffect(() => {
@@ -491,6 +502,78 @@ const updateQuantity = (
     }
   };
 
+  // ─── Return Functions ─────────────────────────────────────────────────────
+
+  const handleReturnFetch = async () => {
+    if (!returnInvoiceNumber.trim()) {
+      setReturnError("Please enter an invoice number");
+      return;
+    }
+    setReturnLoading(true);
+    setReturnError(null);
+    setFetchedBill(null);
+    setReturnQuantities({});
+    try {
+      const res = await fetch(`/api/bills/return?billNumber=${returnInvoiceNumber}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setFetchedBill(data.data);
+      // Initialize return quantities to 0 for all items
+      const quantities: { [key: string]: number } = {};
+      data.data.billItems.forEach((item: any) => {
+        quantities[item.id] = 0;
+      });
+      setReturnQuantities(quantities);
+    } catch (err: any) {
+      setReturnError(err.message);
+    } finally {
+      setReturnLoading(false);
+    }
+  };
+
+  const handleProcessReturn = async () => {
+    if (!fetchedBill) return;
+    const itemsToReturn = fetchedBill.billItems
+      .filter((item: any) => returnQuantities[item.id] > 0)
+      .map((item: any) => ({
+        itemId: item.itemId,
+        quantity: returnQuantities[item.id],
+      }));
+
+    if (itemsToReturn.length === 0) {
+      setReturnError("Select at least one item to return");
+      return;
+    }
+
+    const totalReturnAmount = fetchedBill.billItems.reduce((sum: number, item: any) => {
+      return sum + (item.price * returnQuantities[item.id]);
+    }, 0);
+
+    setReturnLoading(true);
+    try {
+      const res = await fetch("/api/bills/return", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          billId: fetchedBill.id,
+          itemsToReturn,
+          totalReturnAmount,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMessage({ type: "success", text: `Return processed successfully for ${returnInvoiceNumber}` });
+      setIsReturnModalOpen(false);
+      setReturnInvoiceNumber("");
+      setFetchedBill(null);
+      setReturnQuantities({});
+    } catch (err: any) {
+      setReturnError(err.message);
+    } finally {
+      setReturnLoading(false);
+    }
+  };
+
   const filteredCatalog = catalog.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.barcode.includes(searchTerm)
@@ -867,6 +950,22 @@ const updateQuantity = (
               </div>
             )}
 
+            {/* Process Return Button - Only for non-CASHIER roles */}
+            {session?.user.role !== "CASHIER" && (
+              <button
+                onClick={() => {
+                  setIsReturnModalOpen(true);
+                  setReturnInvoiceNumber("");
+                  setFetchedBill(null);
+                  setReturnQuantities({});
+                  setReturnError(null);
+                }}
+                className="w-full py-2 rounded-lg font-semibold transition-colors bg-amber-600 text-white hover:bg-amber-700 text-sm"
+              >
+                Process Return
+              </button>
+            )}
+
             <button
               onClick={handleCheckout}
               disabled={cart.length === 0 || isProcessing || hasBelowCostItem}
@@ -1041,6 +1140,139 @@ const updateQuantity = (
 
       </div>
 
+    )}
+
+    {/* Return Modal */}
+    {isReturnModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div className="bg-background w-full max-w-2xl rounded-xl shadow-xl overflow-hidden border border-border">
+          <div className="flex items-center justify-between p-4 border-b border-border">
+            <h2 className="text-lg font-bold">Process Return</h2>
+            <button 
+              onClick={() => {
+                setIsReturnModalOpen(false);
+                setReturnInvoiceNumber("");
+                setFetchedBill(null);
+                setReturnQuantities({});
+                setReturnError(null);
+              }} 
+              className="text-muted-foreground hover:bg-muted p-1 rounded-full"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+            {!fetchedBill ? (
+              <>
+                <div>
+                  <label className="text-sm font-medium">Invoice Number</label>
+                  <div className="flex gap-2 mt-2">
+                    <input
+                      type="text"
+                      placeholder="e.g., INV-001"
+                      value={returnInvoiceNumber}
+                      onChange={(e) => {
+                        setReturnInvoiceNumber(e.target.value);
+                        setReturnError(null);
+                      }}
+                      className="flex-1 border rounded-md px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={handleReturnFetch}
+                      disabled={returnLoading}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-bold disabled:opacity-50"
+                    >
+                      {returnLoading ? "Loading..." : "Fetch"}
+                    </button>
+                  </div>
+                </div>
+                {returnError && (
+                  <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/15 p-3 rounded-md">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    {returnError}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="bg-muted p-3 rounded-md">
+                  <p className="text-sm font-medium">Invoice: <span className="font-bold text-primary">{fetchedBill.billNumber}</span></p>
+                  <p className="text-xs text-muted-foreground">Customer: {fetchedBill.customer?.name || "N/A"}</p>
+                </div>
+
+                <div className="space-y-3">
+                  <h3 className="text-sm font-bold">Select Items to Return</h3>
+                  {fetchedBill.billItems.map((item: any) => (
+                    <div key={item.id} className="flex items-center justify-between p-3 border rounded-md">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">{item.item?.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Rs. {parseFloat(item.price).toFixed(2)} × {item.quantity} = Rs. {(parseFloat(item.price) * item.quantity).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max={item.quantity}
+                          value={returnQuantities[item.id] || 0}
+                          onChange={(e) => {
+                            setReturnQuantities({
+                              ...returnQuantities,
+                              [item.id]: Math.min(Math.max(0, parseInt(e.target.value) || 0), item.quantity)
+                            });
+                          }}
+                          className="w-16 border rounded-md px-2 py-1 text-sm text-center"
+                        />
+                        <span className="text-xs text-muted-foreground">/ {item.quantity}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {returnError && (
+                  <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/15 p-3 rounded-md">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    {returnError}
+                  </div>
+                )}
+
+                <div className="bg-blue-50 border border-blue-200 p-3 rounded-md">
+                  <p className="text-sm font-medium text-blue-900">
+                    Return Amount: Rs. {fetchedBill.billItems.reduce((sum: number, item: any) => 
+                      sum + (item.price * returnQuantities[item.id]), 0).toFixed(2)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 p-4 border-t border-border">
+            <button
+              onClick={() => {
+                setIsReturnModalOpen(false);
+                setReturnInvoiceNumber("");
+                setFetchedBill(null);
+                setReturnQuantities({});
+                setReturnError(null);
+              }}
+              className="px-4 py-2 border rounded-md text-sm"
+            >
+              Close
+            </button>
+            {fetchedBill && (
+              <button
+                onClick={handleProcessReturn}
+                disabled={returnLoading || Object.values(returnQuantities).every(v => v === 0)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-bold disabled:opacity-50"
+              >
+                {returnLoading ? "Processing..." : "Confirm Return"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     )}
     </>
   );
