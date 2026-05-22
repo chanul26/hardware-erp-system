@@ -102,187 +102,77 @@ export async function POST(
             });
 
           // LOOP ITEMS
-
           for (const item of items) {
-
-            // FIND ITEM
-
-            const currentItem =
-              await tx.item.findUnique(
-                {
-                  where: {
-                    id: item.id,
-                  },
-                }
-              );
-
-            if (
-              !currentItem ||
-              currentItem.stockQty <
-                item.quantity
-            ) {
-
-              throw new Error(
-                `Insufficient stock for item: ${item.name}`
-              );
+            const currentItem = await tx.item.findUnique({ where: { id: item.id } });
+            if (!currentItem || currentItem.stockQty < item.quantity) {
+              throw new Error(`Insufficient stock for item: ${item.name}`);
             }
 
-            // GET ALL FIFO BATCHES
+            const fifoBatches = await tx.purchaseBatch.findMany({
+              where: { itemId: item.id, remainingQty: { gt: 0 } },
+              orderBy: { createdAt: "asc" },
+            });
 
-            const fifoBatches =
-              await tx.purchaseBatch.findMany(
-                {
-                  where: {
-                    itemId:
-                      item.id,
+            let remainingQty = item.quantity;
 
-                    remainingQty: {
-                      gt: 0,
-                    },
-                  },
-
-                  orderBy: {
-                    createdAt:
-                      "asc",
-                  },
-                }
-              );
-
-            if (
-              fifoBatches.length === 0
-            ) {
-
-              throw new Error(
-                `No purchase batch found for ${item.name}`
-              );
-            }
-
-            // TOTAL AVAILABLE
-
-            const totalBatchStock =
-              fifoBatches.reduce(
-                (
-                  total,
-                  batch
-                ) =>
-                  total +
-                  batch.remainingQty,
-                0
-              );
-
-            if (
-              totalBatchStock <
-              item.quantity
-            ) {
-
-              throw new Error(
-                `Not enough batch stock for ${item.name}`
-              );
-            }
-
-            // FIFO SELLING
-
-            let remainingQty =
-              item.quantity;
-
+            // 1. Consume from available FIFO batches first
             for (const batch of fifoBatches) {
+              if (remainingQty <= 0) break;
+              const qtyToTake = Math.min(remainingQty, batch.remainingQty);
 
-              if (
-                remainingQty <= 0
-              ) {
-                break;
-              }
+              await tx.billItem.create({
+                data: {
+                  billId: bill.id,
+                  itemId: item.id,
+                  quantity: qtyToTake,
+                  unitPrice: Number(item.price || batch.sellingPrice),
+                  totalPrice: Number(item.price || batch.sellingPrice) * qtyToTake,
+                },
+              });
 
-              // HOW MANY TO TAKE FROM THIS BATCH
+              await tx.purchaseBatch.update({
+                where: { id: batch.id },
+                data: { remainingQty: { decrement: qtyToTake } },
+              });
 
-              const qtyToTake =
-                Math.min(
-                  remainingQty,
-                  batch.remainingQty
-                );
+              await tx.stockMovement.create({
+                data: {
+                  itemId: item.id,
+                  quantity: -qtyToTake,
+                  type: "SALE",
+                  note: `Sold ${qtyToTake} qty from FIFO batch via invoice ${billNumber}`,
+                },
+              });
 
-              // CREATE BILL ITEM
-
-              await tx.billItem.create(
-                {
-                  data: {
-                    billId:
-                      bill.id,
-
-                    itemId:
-                      item.id,
-
-                    quantity:
-                      qtyToTake,
-
-                    unitPrice:
-                      Number(
-                        batch.sellingPrice
-                      ),
-
-                    totalPrice:
-                      Number(
-                        batch.sellingPrice
-                      ) *
-                      qtyToTake,
-                  },
-                }
-              );
-
-              // REDUCE BATCH STOCK
-
-              await tx.purchaseBatch.update(
-                {
-                  where: {
-                    id: batch.id,
-                  },
-
-                  data: {
-                    remainingQty: {
-                      decrement:
-                        qtyToTake,
-                    },
-                  },
-                }
-              );
-
-              // STOCK MOVEMENT
-
-              await tx.stockMovement.create(
-                {
-                  data: {
-                    itemId:
-                      item.id,
-
-                    quantity:
-                      -qtyToTake,
-
-                    type: "SALE",
-
-                    note: `Sold ${qtyToTake} qty from FIFO batch via invoice ${billNumber}`,
-                  },
-                }
-              );
-
-              // REDUCE REMAINING
-
-              remainingQty -=
-                qtyToTake;
+              remainingQty -= qtyToTake;
             }
 
-            // REDUCE MAIN ITEM STOCK
-
-            await tx.item.update({
-              where: {
-                id: item.id,
-              },
-
-              data: {
-                stockQty: {
-                  decrement:
-                    item.quantity,
+            // 2. LEGACY FALLBACK: If batches ran out (or didn't exist)
+            if (remainingQty > 0) {
+              await tx.billItem.create({
+                data: {
+                  billId: bill.id,
+                  itemId: item.id,
+                  quantity: remainingQty,
+                  unitPrice: Number(item.price || currentItem.sellingPrice),
+                  totalPrice: Number(item.price || currentItem.sellingPrice) * remainingQty,
                 },
-              },
+              });
+
+              await tx.stockMovement.create({
+                data: {
+                  itemId: item.id,
+                  quantity: -remainingQty,
+                  type: "SALE",
+                  note: `Sold ${remainingQty} legacy stock via invoice ${billNumber}`,
+                },
+              });
+            }
+
+            // 3. REDUCE MAIN ITEM STOCK
+            await tx.item.update({
+              where: { id: item.id },
+              data: { stockQty: { decrement: item.quantity } },
             });
           }
 
