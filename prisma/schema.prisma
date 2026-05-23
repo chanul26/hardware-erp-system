@@ -148,13 +148,14 @@ model Bill {
 }
 
 model BillItem {
-  id         String  @id @default(uuid())
-  billId     String
-  itemId     String
-  quantity   Int
-  unitPrice  Decimal @db.Decimal(12, 2)
-  discount   Decimal @default(0) @db.Decimal(12, 2)
-  totalPrice Decimal @db.Decimal(12, 2)
+  id          String  @id @default(uuid())
+  billId      String
+  itemId      String
+  quantity    Int
+  returnedQty Int     @default(0) // MUST BE HERE
+  unitPrice   Decimal @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  totalPrice  Decimal @db.Decimal(12, 2)
 
   bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
   item Item @relation(fields: [itemId], references: [id])
