@@ -35,11 +35,11 @@ export async function POST(request: Request) {
       // 2. PROCESS EVERY ITEM (Exchanges support both Negative and Positive items)
       for (const item of items) {
         
-        // ==========================================
+        // ==========================================                                                     
         // SCENARIO A: THIS IS A RETURNED ITEM (Negative Qty)
         // ==========================================
         if (item.isReturn) {
-          const absQty = Math.abs(item.quantity);
+          const absQty = Math.abs(item.quantity);  
 
           // 1. Mark original invoice item as returned
           const originalItem = await tx.billItem.findUnique({ where: { id: item.originalBillItemId } });

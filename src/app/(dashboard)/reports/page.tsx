@@ -53,14 +53,50 @@ type ReportData = {
   }[];
   dailyBills: {
     id: string;
+
     billNumber: string;
+
     totalAmount: number;
+
+    amountPaid: any;
+    discount: any;
+    status: any;
+
     createdAt: string;
+
     customer: {
       name: string;
     } | null;
+
+    billItems: {
+
+      quantity: number;
+
+    unitPrice: any;
+    totalPrice: any;
+
+      item: {
+        name: string;
+        buyingPrice: any;
+      };
+
+    }[];
+
+    payments: {
+
+      method: string;
+      amount: number;
+
+    }[];
+
+    cheques: {
+
+      chequeNumber: string;
+
+    }[];
+
   }[];
-};
+  };
 
 type Supplier = {
   id: string;
@@ -71,6 +107,8 @@ export default function ReportsPage() {
   const [report, setReport] = useState<ReportData | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true); // <-- FIX: Added loading state
+  const [selectedBill, setSelectedBill] = useState<any | null>(null);
+  const [showBillPopup, setShowBillPopup] = useState(false);
 
   // GLOBAL FILTER
   const [range, setRange] = useState("today");
@@ -515,6 +553,7 @@ if (loading || !report) {
               <th className="text-left p-4">Amount</th>
               <th className="text-left p-4">Date</th>
               <th className="text-left p-4">Time</th>
+              <th className="text-left p-4">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -527,11 +566,46 @@ if (loading || !report) {
             ) : (
               report.dailyBills.map((bill) => (
                 <tr key={bill.id} className="border-t">
-                  <td className="p-4">{bill.billNumber}</td>
-                  <td className="p-4">{bill.customer?.name || "Walk-in Customer"}</td>
-                  <td className="p-4">Rs. {bill.totalAmount}</td>
-                  <td className="p-4">{new Date(bill.createdAt).toLocaleDateString()}</td>
-                  <td className="p-4">{new Date(bill.createdAt).toLocaleTimeString()}</td>
+
+                  <td className="p-4">
+                    {bill.billNumber}
+                  </td>
+
+                  <td className="p-4">
+                    {bill.customer?.name ||
+                      "Walk-in Customer"}
+                  </td>
+
+                  <td className="p-4">
+                    Rs. {bill.totalAmount}
+                  </td>
+
+                  <td className="p-4">
+                    {new Date(
+                      bill.createdAt
+                    ).toLocaleDateString()}
+                  </td>
+
+                  <td className="p-4">
+                    {new Date(
+                      bill.createdAt
+                    ).toLocaleTimeString()}
+                  </td>
+
+                  <td className="p-4">
+
+                    <button
+                      onClick={() => {
+                        setSelectedBill(bill);
+                        setShowBillPopup(true);
+                      }}
+                      className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
+                    >
+                      View Details
+                    </button>
+
+                  </td>
+
                 </tr>
               ))
             )}
@@ -567,6 +641,183 @@ if (loading || !report) {
           </div>
         </div>
       )}
+      {showBillPopup && selectedBill && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+    
+    <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl p-6 max-h-[85vh] overflow-y-auto">
+      
+      {/* HEADER */}
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">
+            Bill Details
+          </h2>
+
+          <p className="text-sm text-gray-500 mt-1">
+            {selectedBill.billNumber}
+          </p>
+        </div>
+
+        <button
+          onClick={() => setShowBillPopup(false)}
+          className="text-gray-500 hover:text-red-500 text-xl font-bold"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* BILL INFO */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        
+        <div className="bg-gray-50 rounded-xl p-4">
+          <p className="text-sm text-gray-500">
+            Customer
+          </p>
+
+          <p className="font-semibold text-gray-900">
+            {selectedBill.customer?.name || "Walk-in Customer"}
+          </p>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl p-4">
+          <p className="text-sm text-gray-500">
+            Payment Method
+          </p>
+
+          <p className="font-semibold text-gray-900">
+            {selectedBill.payments?.[0]?.method || "Cash"}
+          </p>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl p-4">
+          <p className="text-sm text-gray-500">
+            Total Amount
+          </p>
+
+          <p className="font-bold text-blue-600">
+            Rs. {selectedBill.totalAmount}
+          </p>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl p-4">
+          <p className="text-sm text-gray-500">
+            Discount
+          </p>
+
+          <p className="font-semibold text-red-500">
+            Rs. {selectedBill.discount || 0}
+          </p>
+        </div>
+
+      </div>
+
+      {/* ITEMS TABLE */}
+      <div className="border rounded-xl overflow-hidden mb-6">
+
+        <table className="w-full text-sm">
+
+          <thead className="bg-gray-100">
+
+            <tr>
+
+              <th className="text-left px-4 py-3">
+                Item
+              </th>
+
+              <th className="text-center px-4 py-3">
+                Qty
+              </th>
+
+              <th className="text-right px-4 py-3">
+                Buying
+              </th>
+
+              <th className="text-right px-4 py-3">
+                Selling
+              </th>
+
+            </tr>
+
+          </thead>
+
+          <tbody>
+
+            {selectedBill.billItems?.map(
+              (item: any, index: number) => (
+
+                <tr
+                  key={index}
+                  className="border-t"
+                >
+
+                  <td className="px-4 py-3 font-medium">
+                    {item.item?.name}
+                  </td>
+
+                  <td className="px-4 py-3 text-center">
+                    {item.quantity}
+                  </td>
+
+                  <td className="px-4 py-3 text-right">
+                    Rs. {item.buyingPrice || 0}
+                  </td>
+
+                  <td className="px-4 py-3 text-right text-blue-600 font-semibold">
+                    Rs. {item.unitPrice}
+                  </td>
+
+                </tr>
+              )
+            )}
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+      {/* PROFIT */}
+      <div className="bg-green-50 border border-green-200 rounded-2xl p-5">
+
+        <div className="flex items-center justify-between">
+
+          <span className="text-gray-700 font-medium">
+            Final Profit
+          </span>
+
+          <span className="text-2xl font-bold text-green-600">
+
+            Rs. {
+
+              selectedBill.billItems?.reduce(
+                (total: number, item: any) => {
+
+                  return (
+                    total +
+                    (
+                      (
+                        Number(item.unitPrice || 0) -
+                        Number(item.buyingPrice || 0)
+                      ) * Number(item.quantity || 0)
+                    )
+                  );
+
+                },
+                0
+              ) - (selectedBill.discount || 0)
+
+            }
+
+          </span>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+)}
     </div>
   );
 }

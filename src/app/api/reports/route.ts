@@ -244,6 +244,7 @@ export async function GET(req: Request) {
 
     const dailyBills =
       await prisma.bill.findMany({
+
         where: {
           createdAt: {
             gte: startDate,
@@ -251,12 +252,29 @@ export async function GET(req: Request) {
         },
 
         include: {
+
           customer: true,
+
+          billItems: {
+
+            include: {
+
+              item: true,
+
+            },
+
+          },
+
+          payments: true,
+
+          cheques: true,
+
         },
 
         orderBy: {
           createdAt: "desc",
         },
+
       });
 
     // =========================================
