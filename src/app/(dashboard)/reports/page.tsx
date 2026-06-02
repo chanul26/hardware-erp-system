@@ -472,14 +472,17 @@ if (loading || !report) {
         </div>
 
         <table className="w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="text-left p-4">Item</th>
-              <th className="text-left p-4">Supplier</th>
-              <th className="text-left p-4">Quantity</th>
-              <th className="text-left p-4">Date</th>
-            </tr>
-          </thead>
+        <thead className="bg-gray-100">
+          <tr>
+            <th className="text-left p-4">PO Number</th>
+            <th className="text-left p-4">Supplier</th>
+            <th className="text-left p-4">Items</th>
+            <th className="text-left p-4">Total Value</th>
+            <th className="text-left p-4">Date</th>
+            <th className="text-left p-4">Payment</th>
+            <th className="text-left p-4">Actions</th>
+          </tr>
+        </thead>
           <tbody>
             {report.stockAdditions.length === 0 ? (
               <tr>
