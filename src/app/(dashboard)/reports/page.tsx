@@ -53,15 +53,11 @@ type ReportData = {
   }[];
   dailyBills: {
     id: string;
-
     billNumber: string;
-
     totalAmount: number;
-
     amountPaid: any;
     discount: any;
     status: any;
-
     createdAt: string;
 
     customer: {
@@ -69,32 +65,51 @@ type ReportData = {
     } | null;
 
     billItems: {
-
       quantity: number;
-
-    unitPrice: any;
-    totalPrice: any;
+      unitPrice: any;
+      totalPrice: any;
 
       item: {
         name: string;
         buyingPrice: any;
       };
-
     }[];
 
     payments: {
-
       method: string;
       amount: number;
-
     }[];
 
     cheques: {
-
       chequeNumber: string;
-
     }[];
+  }[];
 
+  returnedBills: {
+    id: string;
+
+    billNumber: string;
+
+    originalInvoice?: string;
+
+    createdAt: string;
+
+    totalAmount: number;
+
+    customer: {
+      name: string;
+    } | null;
+
+    billItems: {
+      quantity: number;
+      unitPrice: any;
+      buyingPrice: any;
+      totalPrice: any;
+
+      item: {
+        name: string;
+      };
+    }[];
   }[];
   };
 
@@ -109,6 +124,9 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true); // <-- FIX: Added loading state
   const [selectedBill, setSelectedBill] = useState<any | null>(null);
   const [showBillPopup, setShowBillPopup] = useState(false);
+  const [returnPage, setReturnPage] = useState(1);
+
+  const RETURNS_PER_PAGE = 10
 
   // GLOBAL FILTER
   const [range, setRange] = useState("today");
@@ -612,6 +630,135 @@ if (loading || !report) {
           </tbody>
         </table>
       </div>
+      <div className="bg-white border rounded-2xl shadow-sm overflow-hidden">
+
+        <div className="p-5 border-b">
+          <h2 className="text-2xl font-bold">
+            Returned Items Report
+          </h2>
+
+          <p className="text-gray-500 text-sm mt-1">
+            All returned invoices
+          </p>
+        </div>
+
+        <table className="w-full">
+
+          <thead className="bg-gray-100">
+
+            <tr>
+              <th className="text-left p-4">Return Invoice</th>
+              <th className="text-left p-4">Customer</th>
+              <th className="text-left p-4">Returned Value</th>
+              <th className="text-left p-4">Return Date</th>
+              <th className="text-left p-4">Actions</th>
+            </tr>
+
+          </thead>
+
+          <tbody>
+
+            {report.returnedBills?.length === 0 ? (
+
+              <tr>
+                <td
+                  colSpan={5}
+                  className="text-center p-6 text-gray-500"
+                >
+                  No returned invoices found
+                </td>
+              </tr>
+
+            ) : (
+
+              report.returnedBills
+                ?.slice(
+                  (returnPage - 1) * RETURNS_PER_PAGE,
+                  returnPage * RETURNS_PER_PAGE
+                )
+                .map((bill) => (
+
+                  <tr
+                    key={bill.id}
+                    className="border-t"
+                  >
+
+                    <td className="p-4">
+                      {bill.billNumber}
+                    </td>
+
+                    <td className="p-4">
+                      {bill.customer?.name ||
+                        "Walk-in Customer"}
+                    </td>
+
+                    <td className="p-4">
+                      Rs. {bill.totalAmount}
+                    </td>
+
+                    <td className="p-4">
+                      {new Date(
+                        bill.createdAt
+                      ).toLocaleDateString()}
+                    </td>
+
+                    <td className="p-4">
+
+                      <button
+                        onClick={() => {
+                          setSelectedBill(bill);
+                          setShowBillPopup(true);
+                        }}
+                        className="px-3 py-1 bg-red-600 text-white rounded-lg"
+                      >
+                        View Details
+                      </button>
+
+                    </td>
+
+                  </tr>
+
+                ))
+            )}
+
+          </tbody>
+
+        </table>
+
+      </div> 
+      <div className="flex justify-center items-center gap-4 py-5">
+
+        <button
+          disabled={returnPage === 1}
+          onClick={() =>
+            setReturnPage((p) => p - 1)
+          }
+          className="border px-4 py-2 rounded-lg"
+        >
+          Previous
+        </button>
+
+        <span>
+          Page {returnPage}
+        </span>
+
+        <button
+          disabled={
+            returnPage >=
+            Math.ceil(
+              report.returnedBills.length /
+                RETURNS_PER_PAGE
+            )
+          }
+          onClick={() =>
+            setReturnPage((p) => p + 1)
+          }
+          className="border px-4 py-2 rounded-lg"
+        >
+          Next
+        </button>
+
+      </div>     
 
       {/* PASS MODAL */}
       {showPassModal && (

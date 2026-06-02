@@ -348,6 +348,39 @@ export async function GET(req: Request) {
         },
       });
 
+    const returnedBills =
+      await prisma.bill.findMany({
+        where: {
+          billItems: {
+            some: {
+              quantity: {
+                lt: 0,
+              },
+            },
+          },
+
+          createdAt: {
+            gte: startDate,
+          },
+        },
+
+        include: {
+          customer: true,
+
+          billItems: {
+            include: {
+              item: true,
+            },
+          },
+
+          payments: true,
+        },
+
+        orderBy: {
+          createdAt: "desc",
+        },
+      });      
+
     // =========================================
     // RETURN RESPONSE
     // =========================================
@@ -374,6 +407,8 @@ export async function GET(req: Request) {
         chequeReports,
 
         suppliers,
+
+        returnedBills,
       },
     });
   } catch (error) {
