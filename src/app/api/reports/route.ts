@@ -336,6 +336,40 @@ export async function GET(req: Request) {
           chequeDate: "desc",
         },
       });
+      // =========================================
+      // UPCOMING CHEQUE ALERTS
+      // =========================================
+
+      const today = new Date();
+
+      const twoDaysLater = new Date();
+      twoDaysLater.setDate(
+        twoDaysLater.getDate() + 2
+      );
+
+      const upcomingCheques =
+        await prisma.supplierCheque.findMany({
+          where: {
+            status: "PENDING",
+
+            chequeDate: {
+              gte: today,
+              lte: twoDaysLater,
+            },
+          },
+
+          include: {
+            supplierPayment: {
+              include: {
+                supplier: true,
+              },
+            },
+          },
+
+          orderBy: {
+            chequeDate: "asc",
+          },
+        });    
 
     // =========================================
     // SUPPLIERS LIST
@@ -409,6 +443,7 @@ export async function GET(req: Request) {
         suppliers,
 
         returnedBills,
+        upcomingCheques,
       },
     });
   } catch (error) {

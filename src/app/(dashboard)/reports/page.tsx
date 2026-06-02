@@ -110,7 +110,23 @@ type ReportData = {
         name: string;
       };
     }[];
+ 
   }[];
+      upcomingCheques: {
+      id: string;
+
+      chequeNumber: string;
+
+      amount: number;
+
+      chequeDate: string;
+
+      supplierPayment: {
+        supplier: {
+          name: string;
+        };
+      };
+    }[];   
   };
 
 type Supplier = {
@@ -127,6 +143,26 @@ export default function ReportsPage() {
   const [returnPage, setReturnPage] = useState(1);
 
   const RETURNS_PER_PAGE = 10
+
+  const [billPage, setBillPage] = useState(1);
+
+  const BILLS_PER_PAGE = 10;
+
+  const [chequePage, setChequePage] = useState(1);
+
+  const CHEQUES_PER_PAGE = 10;
+
+  const [stockPage, setStockPage] = useState(1);
+
+  const STOCKS_PER_PAGE = 10;
+
+  const [lowStockPage, setLowStockPage] = useState(1);
+
+  const LOW_STOCKS_PER_PAGE = 10;
+
+  const [debtorPage, setDebtorPage] = useState(1);
+
+  const DEBTORS_PER_PAGE = 10;
 
   // GLOBAL FILTER
   const [range, setRange] = useState("today");
@@ -309,6 +345,75 @@ if (loading || !report) {
           <h2 className="text-3xl font-bold mt-2">{report.topDebtors.length}</h2>
         </div>
       </div>
+{report.upcomingCheques?.length > 0 && (
+
+  <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-xl p-5">
+
+    <h2 className="text-xl font-bold text-yellow-800 mb-3">
+      ⚠ Upcoming Cheques
+    </h2>
+
+    <div className="space-y-3">
+
+      {report.upcomingCheques.map(
+        (cheque) => {
+
+          const daysLeft =
+            Math.ceil(
+              (
+                new Date(
+                  cheque.chequeDate
+                ).getTime() -
+                Date.now()
+              ) /
+              (1000 * 60 * 60 * 24)
+            );
+
+          return (
+
+            <div
+              key={cheque.id}
+              className="bg-white border rounded-lg p-3"
+            >
+
+              <div className="font-semibold">
+                {cheque.chequeNumber}
+              </div>
+
+              <div>
+                Supplier:
+                {" "}
+                {
+                  cheque
+                    .supplierPayment
+                    .supplier
+                    .name
+                }
+              </div>
+
+              <div>
+                Amount:
+                Rs. {cheque.amount}
+              </div>
+
+              <div className="font-bold text-red-600">
+
+                {daysLeft === 0
+                  ? "Due Today"
+                  : `Due in ${daysLeft} day(s)`}
+
+              </div>
+
+            </div>
+          );
+        }
+      )}
+
+    </div>
+
+  </div>
+
+)}      
 
       {/* FINANCIAL OVERVIEW */}
       <div className="bg-white border rounded-2xl p-6 shadow-sm">
@@ -383,7 +488,12 @@ if (loading || !report) {
                 </td>
               </tr>
             ) : (
-              report.stockAdditions.map((stock) => (
+              report.stockAdditions
+                .slice(
+                  (stockPage - 1) * STOCKS_PER_PAGE,
+                  stockPage * STOCKS_PER_PAGE
+                )
+                .map((stock) => (
                 <tr key={stock.id} className="border-t">
                   <td className="p-4">{stock.item.name}</td>
                   <td className="p-4">{stock.purchaseOrder.supplier.name}</td>
@@ -394,6 +504,39 @@ if (loading || !report) {
             )}
           </tbody>
         </table>
+        <div className="flex justify-center items-center gap-4 py-5">
+
+          <button
+            disabled={stockPage === 1}
+            onClick={() =>
+              setStockPage((p) => p - 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Previous
+          </button>
+
+          <span>
+            Page {stockPage}
+          </span>
+
+          <button
+            disabled={
+              stockPage >=
+              Math.ceil(
+                report.stockAdditions.length /
+                STOCKS_PER_PAGE
+              )
+            }
+            onClick={() =>
+              setStockPage((p) => p + 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Next
+          </button>
+
+        </div>        
       </div>
 
       {/* LOW STOCK */}
@@ -411,7 +554,12 @@ if (loading || !report) {
             </tr>
           </thead>
           <tbody>
-            {report.lowStockItems.map((item) => (
+              {report.lowStockItems
+                .slice(
+                  (lowStockPage - 1) * LOW_STOCKS_PER_PAGE,
+                  lowStockPage * LOW_STOCKS_PER_PAGE
+                )
+                .map((item) => (
               <tr key={item.id} className="border-t">
                 <td className="p-4">{item.name}</td>
                 <td className="p-4">{item.stockQty}</td>
@@ -425,6 +573,39 @@ if (loading || !report) {
             ))}
           </tbody>
         </table>
+        <div className="flex justify-center items-center gap-4 py-5">
+
+          <button
+            disabled={lowStockPage === 1}
+            onClick={() =>
+              setLowStockPage((p) => p - 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Previous
+          </button>
+
+          <span>
+            Page {lowStockPage}
+          </span>
+
+          <button
+            disabled={
+              lowStockPage >=
+              Math.ceil(
+                report.lowStockItems.length /
+                LOW_STOCKS_PER_PAGE
+              )
+            }
+            onClick={() =>
+              setLowStockPage((p) => p + 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Next
+          </button>
+
+        </div>
       </div>
 
       {/* TOP DEBTORS */}
@@ -454,7 +635,12 @@ if (loading || !report) {
                 </td>
               </tr>
             ) : (
-              filteredDebtors.map((debtor, index) => (
+              filteredDebtors
+                .slice(
+                  (debtorPage - 1) * DEBTORS_PER_PAGE,
+                  debtorPage * DEBTORS_PER_PAGE
+                )
+                .map((debtor, index) => (
                 <tr key={index} className="border-t">
                   <td className="p-4">{debtor.name}</td>
                   <td className="p-4">Rs. {debtor.amount}</td>
@@ -463,6 +649,39 @@ if (loading || !report) {
             )}
           </tbody>
         </table>
+        <div className="flex justify-center items-center gap-4 py-5">
+
+          <button
+            disabled={debtorPage === 1}
+            onClick={() =>
+              setDebtorPage((p) => p - 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Previous
+          </button>
+
+          <span>
+            Page {debtorPage}
+          </span>
+
+          <button
+            disabled={
+              debtorPage >=
+              Math.ceil(
+                filteredDebtors.length /
+                DEBTORS_PER_PAGE
+              )
+            }
+            onClick={() =>
+              setDebtorPage((p) => p + 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Next
+          </button>
+
+        </div>        
       </div>
 
       {/* CHEQUE REPORT */}
@@ -507,7 +726,12 @@ if (loading || !report) {
                 </td>
               </tr>
             ) : (
-              report.chequeReports.map((cheque) => (
+              report.chequeReports
+                .slice(
+                  (chequePage - 1) * CHEQUES_PER_PAGE,
+                  chequePage * CHEQUES_PER_PAGE
+                )
+                .map((cheque) => (
                 <tr key={cheque.id} className="border-t">
                   <td className="p-4">{cheque.chequeNumber}</td>
                   <td className="p-4">{cheque.supplierPayment.supplier.name}</td>
@@ -555,6 +779,39 @@ if (loading || !report) {
             )}
           </tbody>
         </table>
+        <div className="flex justify-center items-center gap-4 py-5">
+
+          <button
+            disabled={chequePage === 1}
+            onClick={() =>
+              setChequePage((p) => p - 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Previous
+          </button>
+
+          <span>
+            Page {chequePage}
+          </span>
+
+          <button
+            disabled={
+              chequePage >=
+              Math.ceil(
+                report.chequeReports.length /
+                CHEQUES_PER_PAGE
+              )
+            }
+            onClick={() =>
+              setChequePage((p) => p + 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Next
+          </button>
+
+        </div>        
       </div>
 
       {/* DAILY BILLS REPORT */}
@@ -582,8 +839,13 @@ if (loading || !report) {
                 </td>
               </tr>
             ) : (
-              report.dailyBills.map((bill) => (
-                <tr key={bill.id} className="border-t">
+              report.dailyBills
+                .slice(
+                  (billPage - 1) * BILLS_PER_PAGE,
+                  billPage * BILLS_PER_PAGE
+                )
+                .map((bill) => (
+                              <tr key={bill.id} className="border-t">
 
                   <td className="p-4">
                     {bill.billNumber}
@@ -629,6 +891,35 @@ if (loading || !report) {
             )}
           </tbody>
         </table>
+        <div className="flex justify-center items-center gap-4 py-5">
+
+          <button
+            disabled={billPage === 1}
+            onClick={() => setBillPage((p) => p - 1)}
+            className="border px-4 py-2 rounded-lg"
+          >
+            Previous
+          </button>
+
+          <span>
+            Page {billPage}
+          </span>
+
+          <button
+            disabled={
+              billPage >=
+              Math.ceil(
+                report.dailyBills.length /
+                BILLS_PER_PAGE
+              )
+            }
+            onClick={() => setBillPage((p) => p + 1)}
+            className="border px-4 py-2 rounded-lg"
+          >
+            Next
+          </button>
+
+        </div>        
       </div>
       <div className="bg-white border rounded-2xl shadow-sm overflow-hidden">
 
@@ -724,41 +1015,42 @@ if (loading || !report) {
           </tbody>
 
         </table>
+        <div className="flex justify-center items-center gap-4 py-5">
+
+          <button
+            disabled={returnPage === 1}
+            onClick={() =>
+              setReturnPage((p) => p - 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Previous
+          </button>
+
+          <span>
+            Page {returnPage}
+          </span>
+
+          <button
+            disabled={
+              returnPage >=
+              Math.ceil(
+                report.returnedBills.length /
+                  RETURNS_PER_PAGE
+              )
+            }
+            onClick={() =>
+              setReturnPage((p) => p + 1)
+            }
+            className="border px-4 py-2 rounded-lg"
+          >
+            Next
+          </button>
+
+        </div>     
+
 
       </div> 
-      <div className="flex justify-center items-center gap-4 py-5">
-
-        <button
-          disabled={returnPage === 1}
-          onClick={() =>
-            setReturnPage((p) => p - 1)
-          }
-          className="border px-4 py-2 rounded-lg"
-        >
-          Previous
-        </button>
-
-        <span>
-          Page {returnPage}
-        </span>
-
-        <button
-          disabled={
-            returnPage >=
-            Math.ceil(
-              report.returnedBills.length /
-                RETURNS_PER_PAGE
-            )
-          }
-          onClick={() =>
-            setReturnPage((p) => p + 1)
-          }
-          className="border px-4 py-2 rounded-lg"
-        >
-          Next
-        </button>
-
-      </div>     
 
       {/* PASS MODAL */}
       {showPassModal && (
