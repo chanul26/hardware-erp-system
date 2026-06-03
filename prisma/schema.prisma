@@ -307,6 +307,33 @@ model SupplierCheque {
   supplierPayment   SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
 }
 
+model Bank {
+  id            String               @id @default(cuid())
+  name          String               // e.g., "Commercial Bank", "BOC"
+  accountNumber String?              // e.g., "8001234567"
+  transactions  FinanceTransaction[]
+  createdAt     DateTime             @default(now())
+}
+
+model Borrower {
+  id           String               @id @default(cuid())
+  name         String               // Person's Name
+  phone        String?              // Contact details
+  details      String?              // Extra notes (e.g., "Amal's brother", "Delivery Guy")
+  transactions FinanceTransaction[]
+  createdAt    DateTime             @default(now())
+}
+
+model FinanceTransaction {
+  id          String    @id @default(cuid())
+  type        String    // Types: "BANK_DEPOSIT", "BANK_WITHDRAWAL", "LOAN_GIVEN", "LOAN_REPAYMENT", "BILL_PAYMENT", "MISC_EXPENSE"
+  amount      Float
+  description String
+  bankId      String?
+  bank        Bank?     @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  borrowerId  String?
+  borrower    Borrower? @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
 model StockMovement {
   id         String   @id @default(uuid())
 
