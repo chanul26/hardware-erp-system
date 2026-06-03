@@ -206,35 +206,35 @@ export async function GET(req: Request) {
     // =========================================
 
     const stockAdditions =
-      await prisma.purchaseItem.findMany({
+      await prisma.purchaseOrder.findMany({
         where: {
-          purchaseOrder: {
-            createdAt: {
-              gte: startDate,
-            },
-
-            ...(supplierId
-              ? {
-                  supplierId,
-                }
-              : {}),
+          createdAt: {
+            gte: startDate,
           },
+
+          ...(supplierId
+            ? { supplierId }
+            : {}),
         },
 
         include: {
-          item: true,
+          supplier: true,
 
-          purchaseOrder: {
+          purchaseItems: {
             include: {
-              supplier: true,
+              item: true,
+            },
+          },
+
+          supplierPayments: {
+            include: {
+              supplierCheque: true,
             },
           },
         },
 
         orderBy: {
-          purchaseOrder: {
-            createdAt: "desc",
-          },
+          createdAt: "desc",
         },
       });
 
