@@ -25,17 +25,45 @@ type ReportData = {
   }[];
   stockAdditions: {
     id: string;
-    quantity: number;
-    item: {
+
+    orderNumber: string;
+
+    totalAmount: any;
+
+    createdAt: string;
+
+    supplier: {
+      id: string;
       name: string;
     };
-    purchaseOrder: {
-      createdAt: string;
-      supplier: {
-        id: string;
+
+    purchaseItems: {
+      id: string;
+      quantity: number;
+
+      unitCost: any;
+      totalCost: any;
+
+      item: {
         name: string;
+        sellingPrice: any;
       };
-    };
+    }[];
+
+    supplierPayments: {
+      id: string;
+
+      method: string;
+
+      amount: any;
+
+      supplierCheque?: {
+        chequeNumber: string;
+        amount: any;
+        status: string;
+        chequeDate: string;
+      } | null;
+    }[];
   }[];
   chequeReports: {
     id: string;
@@ -139,6 +167,10 @@ export default function ReportsPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true); // <-- FIX: Added loading state
   const [selectedBill, setSelectedBill] = useState<any | null>(null);
+
+  const [selectedPO, setSelectedPO] =useState<any>(null);
+
+  const [showPOPopup, setShowPOPopup] =useState(false);
   const [showBillPopup, setShowBillPopup] = useState(false);
   const [returnPage, setReturnPage] = useState(1);
 
@@ -486,7 +518,7 @@ if (loading || !report) {
           <tbody>
             {report.stockAdditions.length === 0 ? (
               <tr>
-                <td colSpan={4} className="text-center p-6 text-gray-500">
+                <td colSpan={7} className="text-center p-6 text-gray-500">
                   No stock additions found
                 </td>
               </tr>
@@ -496,16 +528,65 @@ if (loading || !report) {
                   (stockPage - 1) * STOCKS_PER_PAGE,
                   stockPage * STOCKS_PER_PAGE
                 )
-                .map((stock) => (
-                <tr key={stock.id} className="border-t">
-                  <td className="p-4">{stock.item.name}</td>
-                  <td className="p-4">{stock.purchaseOrder.supplier.name}</td>
-                  <td className="p-4">{stock.quantity}</td>
-                  <td className="p-4">{new Date(stock.purchaseOrder.createdAt).toLocaleDateString()}</td>
-                </tr>
-              ))
+                .map((po: any) => {
+
+                  const payment =
+                    po.supplierPayments?.[0];
+
+                  return (
+
+                    <tr
+                      key={po.id}
+                      className="border-t"
+                    >
+
+                      <td className="p-4">
+                        {po.orderNumber}
+                      </td>
+
+                      <td className="p-4">
+                        {po.supplier?.name}
+                      </td>
+
+                      <td className="p-4">
+                        {po.purchaseItems?.length}
+                      </td>
+
+                      <td className="p-4">
+                        Rs. {po.totalAmount}
+                      </td>
+
+                      <td className="p-4">
+                        {new Date(
+                          po.createdAt
+                        ).toLocaleDateString()}
+                      </td>
+
+                      <td className="p-4">
+                        {payment?.method || "N/A"}
+                      </td>
+
+                      <td className="p-4">
+
+                        <button
+                          onClick={() => {
+                            setSelectedPO(po);
+                            setShowPOPopup(true);
+                          }}
+                          className="px-3 py-1 bg-blue-600 text-white rounded-lg"
+                        >
+                          View Details
+                        </button>
+
+                      </td>
+
+                    </tr>
+
+                  );
+              })
             )}
-          </tbody>
+            
+              </tbody>
         </table>
         <div className="flex justify-center items-center gap-4 py-5">
 
@@ -1260,6 +1341,222 @@ if (loading || !report) {
 
   </div>
 )}
+    {showPOPopup && selectedPO && (
+
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+
+        <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
+
+          {/* HEADER */}
+
+          <div className="flex justify-between items-center mb-6">
+
+            <div>
+
+              <h2 className="text-2xl font-bold">
+                Purchase Order Details
+              </h2>
+
+              <p className="text-gray-500">
+                {selectedPO.orderNumber}
+              </p>
+
+            </div>
+
+            <button
+              onClick={() => setShowPOPopup(false)}
+              className="text-red-500 text-2xl font-bold"
+            >
+              ✕
+            </button>
+
+          </div>
+
+          {/* INFO */}
+
+          <div className="grid grid-cols-2 gap-4 mb-6">
+
+            <div className="bg-gray-50 p-4 rounded-xl">
+              <p className="text-sm text-gray-500">
+                Supplier
+              </p>
+
+              <p className="font-semibold">
+                {selectedPO.supplier?.name}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-xl">
+              <p className="text-sm text-gray-500">
+                Date
+              </p>
+
+              <p className="font-semibold">
+                {new Date(
+                  selectedPO.createdAt
+                ).toLocaleDateString()}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-xl">
+              <p className="text-sm text-gray-500">
+                Total Amount
+              </p>
+
+              <p className="font-bold text-blue-600">
+                Rs. {selectedPO.totalAmount}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-xl">
+              <p className="text-sm text-gray-500">
+                Payment Method
+              </p>
+
+              <p className="font-semibold">
+                {selectedPO.supplierPayments?.[0]?.method}
+              </p>
+            </div>
+
+          </div>
+
+          {/* ITEMS */}
+
+          <div className="border rounded-xl overflow-hidden mb-6">
+
+            <table className="w-full">
+
+              <thead className="bg-gray-100">
+
+                <tr>
+
+                  <th className="text-left px-4 py-3">
+                    Item
+                  </th>
+
+                  <th className="text-center px-4 py-3">
+                    Qty
+                  </th>
+
+                  <th className="text-right px-4 py-3">
+                    Buying
+                  </th>
+
+                  <th className="text-right px-4 py-3">
+                    Selling
+                  </th>
+
+                </tr>
+
+              </thead>
+
+              <tbody>
+
+                {selectedPO.purchaseItems?.map(
+                  (item: any) => (
+
+                    <tr
+                      key={item.id}
+                      className="border-t"
+                    >
+
+                      <td className="px-4 py-3">
+                        {item.item?.name}
+                      </td>
+
+                      <td className="px-4 py-3 text-center">
+                        {item.quantity}
+                      </td>
+
+                      <td className="px-4 py-3 text-right">
+                         Rs. {item.unitCost}
+                      </td>
+
+                      <td className="px-4 py-3 text-right text-blue-600">
+                        Rs. {item.item?.sellingPrice}
+                      </td>
+
+                    </tr>
+
+                  )
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+          {/* PAYMENT DETAILS */}
+
+          {selectedPO.supplierPayments?.map(
+            (payment: any) => (
+
+              <div
+                key={payment.id}
+                className="bg-gray-50 rounded-xl p-4 mb-4"
+              >
+
+                <h3 className="font-bold mb-3">
+                  Payment Details
+                </h3>
+
+                <p>
+                  Method:
+                  {" "}
+                  {payment.method}
+                </p>
+
+                <p>
+                  Amount:
+                  {" "}
+                  Rs. {payment.amount}
+                </p>
+
+                {payment.supplierCheque && (
+
+                  <div className="mt-3 border-t pt-3">
+
+                    <p>
+                      Cheque Number:
+                      {" "}
+                      {payment.supplierCheque.chequeNumber}
+                    </p>
+
+                    <p>
+                      Cheque Amount:
+                      {" "}
+                      Rs. {payment.supplierCheque.amount}
+                    </p>
+
+                    <p>
+                      Status:
+                      {" "}
+                      {payment.supplierCheque.status}
+                    </p>
+
+                    <p>
+                      Cheque Date:
+                      {" "}
+                      {new Date(
+                        payment.supplierCheque.chequeDate
+                      ).toLocaleDateString()}
+                    </p>
+
+                  </div>
+
+                )}
+
+              </div>
+
+            )
+          )}
+
+        </div>
+
+      </div>
+
+    )}
     </div>
   );
 }
