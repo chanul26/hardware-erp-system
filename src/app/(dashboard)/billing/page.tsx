@@ -82,6 +82,53 @@ export default function BillingPage() {
   const [returnLoading, setReturnLoading] = useState(false);
   const [returnError, setReturnError] = useState<string | null>(null);
 
+  // ==========================================
+  // AUTO-SAVE DRAFT LOGIC
+  // ==========================================
+  const [isStateLoaded, setIsStateLoaded] = useState(false);
+
+  // 1. Load Draft on Mount
+  useEffect(() => {
+    const savedCart = localStorage.getItem("erp_cart");
+    const savedCustomer = localStorage.getItem("erp_customer");
+    const savedDiscount = localStorage.getItem("erp_discount");
+
+    if (savedCart) setCart(JSON.parse(savedCart));
+    if (savedCustomer) setSelectedCustomer(JSON.parse(savedCustomer));
+    if (savedDiscount) setDiscount(savedDiscount);
+
+    setIsStateLoaded(true);
+  }, []);
+
+  // 2. Save Draft on Change
+  useEffect(() => {
+    if (!isStateLoaded) return; // Prevent overwriting storage with empty initial state
+
+    localStorage.setItem("erp_cart", JSON.stringify(cart));
+    localStorage.setItem("erp_discount", discount);
+    
+    if (selectedCustomer) {
+      localStorage.setItem("erp_customer", JSON.stringify(selectedCustomer));
+    } else {
+      localStorage.removeItem("erp_customer");
+    }
+  }, [cart, selectedCustomer, discount, isStateLoaded]);
+
+  // 3. Clear Cart helper
+  const clearCart = () => {
+    setCart([]);
+    setDiscount("");
+    setAmountPaid("");
+    setSelectedCustomer(null);
+    setCustomerQuery("");
+    
+    // Nuke the local storage drafts
+    localStorage.removeItem("erp_cart");
+    localStorage.removeItem("erp_customer");
+    localStorage.removeItem("erp_discount");
+  };
+  // ==========================================
+
   useEffect(() => {
     let barcodeAccumulator = "";
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -235,7 +282,6 @@ export default function BillingPage() {
   const handleCheckout = async () => {
     if (cart.length === 0 || hasBelowCostItem) return;
 
-    // FIX 2: Ensure final amount paid allows negative values without failing the strict React render
     const finalAmountPaid = amountPaid !== "" ? parseFloat(amountPaid) : finalTotal;
 
     if (finalTotal > 0 && finalAmountPaid < finalTotal && !selectedCustomer) {
@@ -272,7 +318,9 @@ export default function BillingPage() {
       });
 
       setMessage({ type: "success", text: `Transaction completed. Invoice: ${data.bill.billNumber}` });
-      setCart([]); setAmountPaid(""); setDiscount(""); setSelectedCustomer(null); setCustomerQuery("");
+      
+      // Clean up UI and persistent storage after a successful checkout
+      clearCart();
 
       const refresh = await fetch("/api/items").then(r => r.json());
       if (refresh.success) setCatalog(refresh.data);
@@ -312,7 +360,6 @@ export default function BillingPage() {
   const handleProcessReturn = () => {
     if (!fetchedBill) return;
 
-    // FIX 1: Safely map items without overwriting the master catalog stock
     const itemsToReturn = fetchedBill.billItems
       .filter((item: any) => returnQuantities[item.id] > 0)
       .map((item: any) => ({
@@ -394,15 +441,24 @@ export default function BillingPage() {
               <ShoppingCart className="h-5 w-5 text-primary" />
               <h2 className="font-bold text-lg text-foreground">Current Bill</h2>
             </div>
-            {cart.length > 0 && !cart.every(i => i.isReturn) && (
-              <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full ${
-                hasBelowCostItem ? "bg-red-100 text-red-700" :
-                parseFloat(marginPercent) < 10 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"
-              }`}>
-                <TrendingUp className="h-3 w-3" />
-                {marginPercent}% margin
-              </div>
-            )}
+            
+            <div className="flex items-center gap-3">
+              {cart.length > 0 && (
+                <button onClick={clearCart} className="text-xs text-destructive hover:underline font-medium">
+                  Clear Cart
+                </button>
+              )}
+              {cart.length > 0 && !cart.every(i => i.isReturn) && (
+                <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full ${
+                  hasBelowCostItem ? "bg-red-100 text-red-700" :
+                  parseFloat(marginPercent) < 10 ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"
+                }`}>
+                  <TrendingUp className="h-3 w-3" />
+                  {marginPercent}% margin
+                </div>
+              )}
+            </div>
+
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -675,7 +731,7 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* FIX 2: Handle negative values gracefully in the printed receipt */}
+      {/* Handle negative values gracefully in the printed receipt */}
       {lastInvoice && (
         <div className="hidden print:block font-mono text-black bg-white w-[80mm] p-4 text-sm leading-tight fixed top-0 left-0 z-[9999]">
           <div className="text-center mb-4">

@@ -2,31 +2,11 @@ import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import {
-  LayoutDashboard,
-  Package,
-  Users,
-  Truck,
-  Receipt,
-  ShoppingCart,
-  CreditCard,
-  BarChart3,
   Settings,
   Hammer,
-  Shield,
 } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
-
-const allNavItems = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Inventory", href: "/inventory", icon: Package },
-  { label: "Billing", href: "/billing", icon: Receipt },
-  { label: "Customers", href: "/customers", icon: Users },
-  { label: "Suppliers", href: "/suppliers", icon: Truck },
-  { label: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart },
-  { label: "Payments", href: "/payments", icon: CreditCard },
-  { label: "Reports", href: "/reports", icon: BarChart3 },
-  { label: "Staff Management", href: "/users", icon: Shield },
-];
+import NavLinks from "@/components/nav/NavLinks";
 
 export default async function DashboardLayout({
   children,
@@ -35,24 +15,7 @@ export default async function DashboardLayout({
 }) {
   // 1. Securely fetch the session on the server
   const session = await getServerSession(authOptions);
-  const role = session?.user?.role || "CASHIER";
-
-  // 2. Filter the navigation items based on the strict RBAC hierarchy
-  const navItems = allNavItems.filter((item) => {
-    if (role === "ADMIN") return true; // Uncle gets everything
-    
-    if (role === "MANAGER") {
-      // Managers get everything EXCEPT Dashboard, Reports, and Staff
-      return !["Dashboard", "Reports", "Staff Management"].includes(item.label);
-    }
-    
-    if (role === "CASHIER") {
-      // Cashiers ONLY get Billing and Customers
-      return ["Billing", "Customers"].includes(item.label);
-    }
-    
-    return false;
-  });
+  const role = (session?.user?.role || "CASHIER") as "ADMIN" | "MANAGER" | "CASHIER";
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -73,27 +36,12 @@ export default async function DashboardLayout({
           </div>
         </div>
 
-        {/* Nav */}
+        {/* Nav — NavLinks is a client component so it can use usePathname() */}
         <nav className="flex-1 overflow-y-auto py-4 px-3">
-          <ul className="space-y-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className="group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  >
-                    <Icon className="h-4 w-4 shrink-0" />
-                    {item.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          <NavLinks role={role} />
         </nav>
 
-        {/* Bottom actions */}
+        {/* Bottom actions — Settings (Admin only) + Sign Out */}
         <div className="border-t border-border p-3 space-y-1">
           {role === "ADMIN" && (
             <Link
