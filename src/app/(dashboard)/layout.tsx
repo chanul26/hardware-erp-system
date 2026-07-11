@@ -20,7 +20,7 @@ export default async function DashboardLayout({
   return (
     <div className="flex min-h-screen bg-background">
       {/* ── Sidebar (Hidden on Print) ── */}
-      <aside className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card shadow-sm print:hidden">
+      <aside className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-gray-300 shadow-sm print:hidden">
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 border-b border-border px-6">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
@@ -37,7 +37,7 @@ export default async function DashboardLayout({
         </div>
 
         {/* Nav — NavLinks is a client component so it can use usePathname() */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3">
+        <nav className="flex-1 overflow-y-auto bg-orange-100 py-4 px-3">
           <NavLinks role={role} />
         </nav>
 
@@ -46,7 +46,7 @@ export default async function DashboardLayout({
           {role === "ADMIN" && (
             <Link
               href="/settings"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-gray-400 hover:text-accent-foreground"
             >
               <Settings className="h-4 w-4" />
               Settings
@@ -59,7 +59,7 @@ export default async function DashboardLayout({
       {/* ── Main content (Padding removed on Print) ── */}
       <div className="flex flex-1 flex-col pl-64 print:pl-0">
         {/* Top bar (Hidden on Print) */}
-        <header className="sticky top-0 z-40 flex h-16 items-center border-b border-border bg-background/95 backdrop-blur px-6 print:hidden">
+        <header className="sticky top-0 z-40 flex h-16 items-center border-b border-border bg-orange-100 backdrop-blur px-6 print:hidden">
           <h1 className="text-lg font-semibold text-foreground">
             Hardware ERP
           </h1>
@@ -71,7 +71,7 @@ export default async function DashboardLayout({
         </header>
 
         {/* Page content (Padding removed on Print) */}
-        <main className="flex-1 p-6 print:p-0 bg-white">{children}</main>
+        <main className="flex-1 p-6 print:p-0 bg-gray-50">{children}</main>
       </div>
     </div>
   );
