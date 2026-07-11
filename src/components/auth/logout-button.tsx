@@ -5,8 +5,8 @@ import { signOut } from "next-auth/react";
 
 export function LogoutButton() {
   const handleLogout = async () => {
-    // This safely destroys the session token and redirects to the login page
-    await signOut({ callbackUrl: "/login" });
+    // Safely destroy the session and redirect to the working root page
+    await signOut({ callbackUrl: "/" });
   };
 
   return (
