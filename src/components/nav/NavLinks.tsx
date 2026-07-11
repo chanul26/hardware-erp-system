@@ -51,24 +51,24 @@ export default function NavLinks({ role }: { role: Role }) {
             <Link
               href={item.href}
               className={`
-                group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150
+                group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-50
                 ${
                   isActive
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    ? "bg-blue-500 text-gray-100 shadow-sm"
+                    : "text-muted-foreground hover:bg-red-300 hover:text-blue-900"
                 }
               `}
             >
               <Icon
                 className={`h-4 w-4 shrink-0 transition-colors ${
-                  isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-accent-foreground"
+                  isActive ? "text-gray" : "text-muted-foreground group-hover:text-blue-900"
                 }`}
               />
               <span>{item.label}</span>
 
               {/* Active indicator dot on the right */}
               {isActive && (
-                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary-foreground opacity-70" />
+                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary-foreground opacity-220" />
               )}
             </Link>
           </li>
