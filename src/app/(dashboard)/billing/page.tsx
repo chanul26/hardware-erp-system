@@ -522,7 +522,21 @@ export default function BillingPage() {
                         ) : (
                           <div className="flex items-center border border-border rounded-md bg-background">
                             <button onClick={() => updateQuantity(item.cartKey, -1)} className="p-1 hover:bg-muted text-muted-foreground"><Minus className="h-3 w-3" /></button>
-                            <span className="px-2 text-sm font-medium">{item.quantity}</span>
+                            
+                            <input 
+                              type="number" 
+                              step="any"
+                              min="0"
+                              value={item.quantity.toString()}
+                              onChange={(e) => {
+                                const newQty = parseFloat(e.target.value);
+                                if (!isNaN(newQty) && newQty > 0) {
+                                  setCart(prev => prev.map(c => c.cartKey === item.cartKey ? { ...c, quantity: newQty } : c));
+                                }
+                              }}
+                              className="w-16 text-center text-sm font-medium bg-transparent border-none focus:ring-0 px-1" 
+                            />
+
                             <button onClick={() => updateQuantity(item.cartKey, 1)} className="p-1 hover:bg-muted text-muted-foreground"><Plus className="h-3 w-3" /></button>
                           </div>
                         )}
@@ -696,13 +710,14 @@ export default function BillingPage() {
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
+                              step="any"
                               min="0"
                               max={availableToReturn}
                               value={returnQuantities[item.id] || 0}
                               onChange={(e) => {
                                 setReturnQuantities({
                                   ...returnQuantities,
-                                  [item.id]: Math.min(Math.max(0, parseInt(e.target.value) || 0), availableToReturn)
+                                  [item.id]: Math.min(Math.max(0, parseFloat(e.target.value) || 0), availableToReturn)
                                 });
                               }}
                               className="w-16 border rounded-md px-2 py-1 text-sm text-center focus:ring-2 focus:ring-amber-500"
