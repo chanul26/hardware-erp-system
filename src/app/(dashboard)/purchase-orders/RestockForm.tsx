@@ -367,7 +367,8 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
               <input 
                 ref={quantityInputRef} 
                 type="number" 
-                min="1" 
+                step="any"
+                min="0" 
                 disabled={!stagedItem}
                 value={stagedQuantity} 
                 onChange={(e) => setStagedQuantity(e.target.value)} 

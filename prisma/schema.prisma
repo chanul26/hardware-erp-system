@@ -112,7 +112,7 @@ model Item {
   description  String?
   category     String?
   unit         String   @default("pcs")
-  stockQty     Int      @default(0)
+  stockQty     Float    @default(0)
   reorderLevel Int      @default(5)
   buyingPrice  Decimal  @db.Decimal(12, 2)
   sellingPrice Decimal  @db.Decimal(12, 2)
@@ -153,8 +153,8 @@ model BillItem {
   billId      String
   itemId      String
 
-  quantity    Int
-  returnedQty Int     @default(0)
+  quantity    Float
+  returnedQty Float   @default(0)
 
   unitPrice   Decimal @db.Decimal(12, 2)
 
@@ -250,10 +250,10 @@ model PurchaseItem {
   id              String  @id @default(uuid())
   purchaseOrderId String
   itemId          String
-  quantity        Int
+  quantity        Float
   unitCost        Decimal @db.Decimal(12, 2)
   totalCost       Decimal @db.Decimal(12, 2)
-  receivedQty     Int     @default(0)
+  receivedQty     Float   @default(0)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   item          Item          @relation(fields: [itemId], references: [id])
@@ -314,7 +314,7 @@ model StockMovement {
   item       Item @relation(fields: [itemId], references: [id])
 
   type       String
-  quantity   Int
+  quantity   Float
 
   note       String?
 
@@ -329,8 +329,8 @@ model PurchaseBatch {
   itemId        String
   item          Item @relation(fields: [itemId], references: [id])
 
-  quantity      Int
-  remainingQty  Int
+  quantity      Float
+  remainingQty  Float
 
   buyingPrice   Decimal  @db.Decimal(12, 2)
   sellingPrice  Decimal  @db.Decimal(12, 2)
