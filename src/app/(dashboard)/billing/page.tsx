@@ -309,6 +309,26 @@ export default function BillingPage() {
   const belowCostItems = cart.filter(item => !item.isReturn && (item.overridePrice ?? item.price) < item.buyingPrice);
   const hasBelowCostItem = belowCostItems.length > 0;
 
+  // Serials must be unique per product. Catching it here saves the cashier
+  // from a rejected checkout after they have already taken the money.
+  const duplicateSerials = (() => {
+    const seen = new Set<string>();
+    const dupes = new Set<string>();
+    for (const item of cart) {
+      if (item.isReturn) continue;
+      for (const serial of item.serials || []) {
+        const trimmed = serial.trim();
+        if (!trimmed) continue;
+        const key = `${item.id}::${trimmed.toLowerCase()}`;
+        if (seen.has(key)) dupes.add(trimmed);
+        seen.add(key);
+      }
+    }
+    return Array.from(dupes);
+  })();
+
+  const hasDuplicateSerial = duplicateSerials.length > 0;
+
   const totalSales = cart.filter(i => !i.isReturn).reduce((sum, item) => sum + (item.overridePrice ?? item.price) * item.quantity, 0);
   const totalCost = cart.filter(i => !i.isReturn).reduce((sum, item) => sum + item.buyingPrice * item.quantity, 0);
   const grossProfit = totalSales - totalCost - numDiscount;
@@ -338,7 +358,7 @@ export default function BillingPage() {
   };
 
   const handleCheckout = async () => {
-    if (cart.length === 0 || hasBelowCostItem) return;
+    if (cart.length === 0 || hasBelowCostItem || hasDuplicateSerial) return;
 
     const finalAmountPaid = amountPaid !== "" ? parseFloat(amountPaid) : finalTotal;
 
@@ -687,6 +707,18 @@ export default function BillingPage() {
               </div>
             )}
 
+            {hasDuplicateSerial && (
+              <div className="p-3 bg-orange-600 text-white rounded-lg flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-bold uppercase">Duplicate Serial — Checkout Blocked</p>
+                  <p className="text-[10px] mt-0.5 opacity-90">
+                    {duplicateSerials.join(", ")} entered more than once. Each unit needs its own serial.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5 relative">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
@@ -773,7 +805,7 @@ export default function BillingPage() {
               </button>
             )}
 
-            <button onClick={handleCheckout} disabled={cart.length === 0 || isProcessing || hasBelowCostItem} className="w-full py-3 rounded-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+            <button onClick={handleCheckout} disabled={cart.length === 0 || isProcessing || hasBelowCostItem || hasDuplicateSerial} className="w-full py-3 rounded-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
               {isProcessing ? "Processing..." : "Checkout & Print"}
             </button>
           </div>

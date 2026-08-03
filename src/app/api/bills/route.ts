@@ -39,6 +39,79 @@ export async function POST(request: Request) {
       );
     }
 
+    // =========================
+    // SERIAL NUMBER VALIDATION
+    // =========================
+    //
+    // Serials are unique per product. Checking before the sale opens means a
+    // mistyped serial gets a plain-English message instead of aborting the
+    // whole checkout with a database error.
+
+    const requestedSerials: {
+      itemId: string;
+      serial: string;
+    }[] = [];
+
+    for (const item of items) {
+
+      if (item.isReturn || !Array.isArray(item.serials)) continue;
+
+      for (const raw of item.serials) {
+
+        const serial = String(raw || "").trim();
+
+        if (serial) {
+          requestedSerials.push({ itemId: item.id, serial });
+        }
+      }
+    }
+
+    if (requestedSerials.length > 0) {
+
+      // Same serial typed twice in this one cart.
+
+      const seen = new Set<string>();
+
+      for (const entry of requestedSerials) {
+
+        const key = `${entry.itemId}::${entry.serial.toLowerCase()}`;
+
+        if (seen.has(key)) {
+          return NextResponse.json(
+            {
+              error: `Serial number "${entry.serial}" is entered twice in this bill. Each unit needs its own serial.`,
+            },
+            { status: 400 }
+          );
+        }
+
+        seen.add(key);
+      }
+
+      // Serial already sold on an earlier bill.
+
+      const clash = await prisma.warranty.findFirst({
+        where: {
+          OR: requestedSerials.map((entry) => ({
+            itemId: entry.itemId,
+            serialNumber: entry.serial,
+          })),
+        },
+        include: {
+          bill: { select: { billNumber: true } },
+        },
+      });
+
+      if (clash) {
+        return NextResponse.json(
+          {
+            error: `Serial number "${clash.serialNumber}" is already recorded on invoice ${clash.bill.billNumber}. Check the serial and try again.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const billNumber = `INV-${Date.now().toString().slice(-6)}`;
 
     const result = await prisma.$transaction(async (tx) => {
@@ -592,6 +665,19 @@ export async function POST(request: Request) {
   } catch (error: any) {
 
     console.error("[POST /api/bills]", error);
+
+    // Two tills can pass the pre-check and still collide on the same serial.
+
+    if (error?.code === "P2002") {
+
+      return NextResponse.json(
+        {
+          error:
+            "That serial number was just recorded on another bill. Check the serial and try again.",
+        },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json(
       {

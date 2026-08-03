@@ -169,19 +169,77 @@ export async function PATCH(
     }
 
     const updated =
-      await prisma.warrantyClaim.update({
+      await prisma.$transaction(
+        async (tx) => {
 
-        where: {
-          id: params.id,
-        },
+          const claim =
+            await tx.warrantyClaim.update({
 
-        data,
+              where: {
+                id: params.id,
+              },
 
-        include: {
-          warranty: true,
-        },
+              data,
 
-      });
+              include: {
+                warranty: true,
+              },
+
+            });
+
+          // CLOSING A CLAIM RELEASES THE WARRANTY
+          //
+          // CLAIMED means "this unit is in the claims process". Once the
+          // claim is settled the unit is back with the customer, so the
+          // warranty must go back to being judged on its dates — otherwise
+          // it reads as permanently mid-claim. A voided warranty stays void.
+
+          const isClosed =
+            data.status === "RESOLVED" ||
+            data.status === "REJECTED";
+
+          if (
+            isClosed &&
+            claim.warranty.status ===
+              "CLAIMED"
+          ) {
+
+            const stillOpen =
+              await tx.warrantyClaim.count({
+
+                where: {
+                  warrantyId:
+                    claim.warrantyId,
+
+                  status: {
+                    notIn: [
+                      "RESOLVED",
+                      "REJECTED",
+                    ],
+                  },
+                },
+
+              });
+
+            if (stillOpen === 0) {
+
+              await tx.warranty.update({
+
+                where: {
+                  id: claim.warrantyId,
+                },
+
+                data: {
+                  status: "ACTIVE",
+                },
+
+              });
+            }
+          }
+
+          return claim;
+        }
+      );
 
     return NextResponse.json({
       success: true,
