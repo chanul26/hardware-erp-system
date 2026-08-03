@@ -22,6 +22,18 @@ export default function AddItemForm({
   const [customCategory, setCustomCategory] =
     useState("");
 
+  // WARRANTY
+  // Off by default — warranty applies to selected products only.
+
+  const [warrantyEligible, setWarrantyEligible] =
+    useState(false);
+
+  const [defaultWarrantyMonths, setDefaultWarrantyMonths] =
+    useState("12");
+
+  const [requiresSerial, setRequiresSerial] =
+    useState(true);
+
   const handleSubmit = async (
     e: React.FormEvent<HTMLFormElement>
   ) => {
@@ -86,6 +98,22 @@ export default function AddItemForm({
       buyingPrice: 0,
 
       sellingPrice: 0,
+
+      // WARRANTY
+
+      warrantyEligible,
+
+      defaultWarrantyMonths:
+        warrantyEligible
+          ? Number(
+              defaultWarrantyMonths
+            ) || null
+          : null,
+
+      requiresSerial:
+        warrantyEligible
+          ? requiresSerial
+          : false,
     };
 
     try {
@@ -346,6 +374,105 @@ export default function AddItemForm({
             name="description"
             className="w-full border p-3 rounded-md mt-1"
           />
+
+        </div>
+
+        {/* WARRANTY */}
+
+        <div className="md:col-span-2 border border-gray-200 rounded-lg p-4 bg-gray-50">
+
+          <label className="flex items-start gap-3 cursor-pointer">
+
+            <input
+              type="checkbox"
+              checked={warrantyEligible}
+              onChange={(e) =>
+                setWarrantyEligible(
+                  e.target.checked
+                )
+              }
+              className="mt-1 h-4 w-4"
+            />
+
+            <span>
+
+              <span className="block text-sm font-medium text-gray-800">
+                This product can carry a warranty
+              </span>
+
+              <span className="block text-xs text-gray-500 mt-0.5">
+                Only tick this for products your suppliers actually give warranty on
+                (drills, pumps, power tools). The exact period is confirmed per
+                shipment when you receive the goods.
+              </span>
+
+            </span>
+
+          </label>
+
+          {warrantyEligible && (
+
+            <div className="mt-4 pl-7 grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              <div>
+
+                <label className="block text-sm font-medium text-gray-700">
+                  Usual Warranty Period (months)
+                </label>
+
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={defaultWarrantyMonths}
+                  onChange={(e) =>
+                    setDefaultWarrantyMonths(
+                      e.target.value
+                    )
+                  }
+                  className="w-full border p-3 rounded-md mt-1"
+                  placeholder="e.g. 12"
+                />
+
+                <p className="text-xs text-gray-500 mt-1">
+                  Used to prefill the restock form. Not a promise on its own.
+                </p>
+
+              </div>
+
+              <div className="flex items-center">
+
+                <label className="flex items-start gap-3 cursor-pointer">
+
+                  <input
+                    type="checkbox"
+                    checked={requiresSerial}
+                    onChange={(e) =>
+                      setRequiresSerial(
+                        e.target.checked
+                      )
+                    }
+                    className="mt-1 h-4 w-4"
+                  />
+
+                  <span>
+
+                    <span className="block text-sm font-medium text-gray-800">
+                      Capture serial number at billing
+                    </span>
+
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      Cashier is prompted for a serial per unit sold.
+                    </span>
+
+                  </span>
+
+                </label>
+
+              </div>
+
+            </div>
+          )}
 
         </div>
 

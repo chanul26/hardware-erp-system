@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ShieldCheck, ShieldOff } from "lucide-react";
 
 import MixingButton from "./MixingButton";
 
@@ -14,6 +16,9 @@ type Item = {
   reorderLevel: number;
   buyingPrice: any;
   sellingPrice: any;
+  warrantyEligible?: boolean;
+  defaultWarrantyMonths?: number | null;
+  requiresSerial?: boolean;
 };
 
 type Props = {
@@ -24,8 +29,84 @@ export default function InventoryTable({
   items,
 }: Props) {
 
+  const router = useRouter();
+
   const [search, setSearch] =
     useState("");
+
+  const [savingId, setSavingId] =
+    useState<string | null>(null);
+
+  // TOGGLE WARRANTY ELIGIBILITY
+  //
+  // Turning this off only stops NEW warranties being issued. Warranties
+  // already given to customers are untouched.
+
+  const toggleWarranty = async (
+    item: Item
+  ) => {
+
+    const enabling =
+      !item.warrantyEligible;
+
+    if (
+      !enabling &&
+      !confirm(
+        `Stop offering warranty on "${item.name}"?\n\nWarranties already issued to customers stay valid.`
+      )
+    ) {
+      return;
+    }
+
+    setSavingId(item.id);
+
+    try {
+
+      const res = await fetch(
+        `/api/items/${item.id}`,
+        {
+          method: "PATCH",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            warrantyEligible:
+              enabling,
+
+            defaultWarrantyMonths:
+              enabling
+                ? item.defaultWarrantyMonths ??
+                  12
+                : null,
+          }),
+        }
+      );
+
+      const json =
+        await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          json.error
+        );
+      }
+
+      router.refresh();
+
+    } catch (error: any) {
+
+      alert(
+        `Failed to update warranty setting: ${error.message}`
+      );
+
+    } finally {
+
+      setSavingId(null);
+    }
+  };
 
   const filteredItems =
     useMemo(() => {
@@ -130,6 +211,10 @@ export default function InventoryTable({
               </th>
 
               <th className="p-3 font-semibold text-gray-600 text-center">
+                Warranty
+              </th>
+
+              <th className="p-3 font-semibold text-gray-600 text-center">
                 Action
               </th>
 
@@ -211,6 +296,55 @@ export default function InventoryTable({
 
                 </td>
 
+                {/* WARRANTY */}
+
+                <td className="p-3 text-center">
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      toggleWarranty(
+                        item
+                      )
+                    }
+                    disabled={
+                      savingId ===
+                      item.id
+                    }
+                    title={
+                      item.warrantyEligible
+                        ? "Warranty offered on this product — click to stop"
+                        : "No warranty on this product — click to enable"
+                    }
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold transition disabled:opacity-50 ${
+                      item.warrantyEligible
+                        ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                        : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                    }`}
+                  >
+
+                    {item.warrantyEligible ? (
+
+                      <>
+                        <ShieldCheck className="h-3 w-3" />
+                        {item.defaultWarrantyMonths
+                          ? `${item.defaultWarrantyMonths} mo`
+                          : "Yes"}
+                      </>
+
+                    ) : (
+
+                      <>
+                        <ShieldOff className="h-3 w-3" />
+                        None
+                      </>
+
+                    )}
+
+                  </button>
+
+                </td>
+
                 {/* ACTION */}
 
                 <td className="p-3 text-center">
@@ -235,7 +369,7 @@ export default function InventoryTable({
               <tr>
 
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="p-8 text-center text-gray-500"
                 >
                   No matching items found.

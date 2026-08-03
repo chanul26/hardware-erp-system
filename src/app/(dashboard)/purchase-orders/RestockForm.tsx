@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Calculator, Barcode, X, Package, Search, Plus, Loader2, ShoppingCart, Trash2 } from "lucide-react";
+import { Calculator, Barcode, X, Package, Search, Plus, Loader2, ShoppingCart, Trash2, ShieldCheck } from "lucide-react";
 
 export default function RestockForm({ suppliers, items: initialItems }: { suppliers: any[], items: any[] }) {
   const router = useRouter();
@@ -35,7 +35,12 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   const [stagedQuantity, setStagedQuantity] = useState("");
   const [stagedUnitCost, setStagedUnitCost] = useState("");
   const [stagedSellingPrice, setStagedSellingPrice] = useState("");
-  
+
+  // Warranty terms the supplier gave for THIS shipment. Only meaningful for
+  // warranty-eligible products; blank means the goods came with no cover.
+  const [stagedWarrantyMonths, setStagedWarrantyMonths] = useState("");
+  const [stagedWarrantyRef, setStagedWarrantyRef] = useState("");
+
   // "Unknown Barcode" Modal State
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   const [newItemBarcode, setNewItemBarcode] = useState("");
@@ -107,6 +112,10 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
       if (foundItem) {
         setStagedItem(foundItem);
         setStagedSellingPrice(String(foundItem.sellingPrice || ""));
+        setStagedWarrantyMonths(
+          foundItem.warrantyEligible ? String(foundItem.defaultWarrantyMonths ?? "") : ""
+        );
+        setStagedWarrantyRef("");
         setSearchInput("");
         setTimeout(() => quantityInputRef.current?.focus(), 100);
       } else {
@@ -119,6 +128,10 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   const handleManualSelect = (item: any) => {
     setStagedItem(item);
     setStagedSellingPrice(String(item.sellingPrice || ""));
+    setStagedWarrantyMonths(
+      item.warrantyEligible ? String(item.defaultWarrantyMonths ?? "") : ""
+    );
+    setStagedWarrantyRef("");
     setSearchInput("");
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
@@ -133,6 +146,11 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     const cost = Number(stagedUnitCost);
     const selling = Number(stagedSellingPrice);
 
+    const warrantyMonths =
+      stagedItem.warrantyEligible && Number(stagedWarrantyMonths) > 0
+        ? Number(stagedWarrantyMonths)
+        : null;
+
     setDeliveryCart([
       ...deliveryCart,
       {
@@ -143,6 +161,9 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
         unitCost: cost,
         sellingPrice: selling,
         totalCost: qty * cost,
+        warrantyEligible: !!stagedItem.warrantyEligible,
+        warrantyMonths,
+        supplierWarrantyRef: warrantyMonths ? stagedWarrantyRef.trim() || null : null,
       },
     ]);
 
@@ -150,6 +171,8 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     setStagedQuantity("");
     setStagedUnitCost("");
     setStagedSellingPrice("");
+    setStagedWarrantyMonths("");
+    setStagedWarrantyRef("");
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
     
@@ -257,6 +280,8 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
             quantity: item.quantity,
             unitCost: item.unitCost,
             sellingPrice: Number(item.sellingPrice || 0),
+            warrantyMonths: item.warrantyMonths ?? null,
+            supplierWarrantyRef: item.supplierWarrantyRef ?? null,
           })),
           paymentMethod,
           amountPaid:
@@ -414,10 +439,53 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                 <Plus className="h-5 w-5" />
               </button>
             </div>
-            
+
           </div>
+
+          {/* ── SUPPLIER WARRANTY (eligible products only) ── */}
+          {stagedItem?.warrantyEligible && (
+            <div className="mt-4 pt-4 border-t border-blue-200">
+              <h4 className="text-xs font-bold text-blue-900 mb-2 flex items-center gap-2">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Supplier Warranty for this shipment
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div>
+                  <label className="block text-xs font-medium text-blue-800 mb-1">
+                    Warranty Period (months)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={stagedWarrantyMonths}
+                    onChange={(e) => setStagedWarrantyMonths(e.target.value)}
+                    className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 text-sm"
+                    placeholder="e.g. 12 — leave blank for none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-blue-800 mb-1">
+                    Supplier Warranty Ref
+                  </label>
+                  <input
+                    type="text"
+                    value={stagedWarrantyRef}
+                    onChange={(e) => setStagedWarrantyRef(e.target.value)}
+                    disabled={!(Number(stagedWarrantyMonths) > 0)}
+                    className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 disabled:opacity-50 text-sm"
+                    placeholder="Warranty card / invoice ref"
+                  />
+                </div>
+                <p className="text-[11px] text-blue-700 leading-snug pb-2">
+                  Leave blank if the supplier gave no warranty on this delivery — you
+                  will not be able to issue one to customers from this stock.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
-       
+
         {/* ── THE DELIVERY CART TABLE ── */}
         <div className="border border-gray-200 rounded-lg overflow-hidden mb-6">
           <table className="w-full text-sm text-left">
@@ -428,6 +496,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                 <th className="px-4 py-3 font-medium text-center">Qty</th>
                 <th className="px-4 py-3 font-medium text-right">  Buying</th>
                 <th className="px-4 py-3 font-medium text-right">  Selling</th>
+                <th className="px-4 py-3 font-medium text-center">Warranty</th>
                 <th className="px-4 py-3 font-medium text-right">  Total Cost</th>
                 <th className="px-4 py-3 text-center"></th>
               </tr>
@@ -435,7 +504,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
             <tbody className="divide-y divide-gray-100">
               {deliveryCart.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                     <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-20" />
                     No items added to this shipment yet. Scan an item above.
                   </td>
@@ -448,6 +517,16 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                     <td className="px-4 py-3 text-center font-bold">{item.quantity}</td>
                     <td className="px-4 py-3 text-right"> Rs. {item.unitCost.toFixed(2)}</td>
                     <td className="px-4 py-3 text-right font-semibold text-green-700"> Rs. {item.sellingPrice.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-center">
+                      {item.warrantyMonths ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                          <ShieldCheck className="h-3 w-3" />
+                          {item.warrantyMonths} mo
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right font-bold text-blue-700"> Rs. {item.totalCost.toFixed(2)}</td>
                     <td className="px-4 py-3 text-center">
                       <button type="button" onClick={() => removeFromCart(idx)} className="text-red-500 hover:text-red-700">

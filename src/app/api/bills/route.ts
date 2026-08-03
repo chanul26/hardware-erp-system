@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import {
+  addMonths,
+  generateWarrantyNumber,
+  normaliseMonths,
+} from "@/lib/warranty";
 
 export async function POST(request: Request) {
   try {
@@ -56,6 +61,100 @@ export async function POST(request: Request) {
       });
 
       // =========================
+      // WARRANTY ISSUANCE
+      // =========================
+      //
+      // A warranty is only issued when BOTH gates pass: the product is
+      // flagged warranty-eligible, and the batch it was sold from actually
+      // came with supplier cover. The customer's clock starts now.
+
+      const checkoutTime = Date.now();
+      let warrantySequence = 0;
+
+      // Returned to the client so the receipt can print warranty numbers.
+      const issuedWarranties: {
+        warrantyNumber: string;
+        itemName: string;
+        serialNumber: string | null;
+        months: number;
+        endDate: Date;
+      }[] = [];
+
+      // FIFO can split one cart line across several bill items, so serials
+      // are consumed from a single queue per cart line rather than per row.
+
+      const issueWarranties = async (opts: {
+        billItemId: string;
+        itemId: string;
+        batchId: string | null;
+        quantity: number;
+        months: number | null;
+        serials: string[];
+        itemName: string;
+      }) => {
+
+        if (!opts.months || opts.quantity <= 0) return;
+
+        const batch = opts.batchId
+          ? await tx.purchaseBatch.findUnique({
+              where: { id: opts.batchId },
+            })
+          : null;
+
+        // No batch on record means legacy stock with no supplier warranty.
+        if (!batch?.warrantyMonths) return;
+
+        const startDate = new Date();
+        const endDate = addMonths(startDate, opts.months);
+
+        // One row per physical unit.
+        const unitCount = Math.max(
+          1,
+          Math.round(opts.quantity)
+        );
+
+        for (let unit = 0; unit < unitCount; unit++) {
+
+          warrantySequence += 1;
+
+          const serial = opts.serials.shift()?.trim() || null;
+
+          const warrantyNumber = generateWarrantyNumber(
+            warrantySequence,
+            checkoutTime
+          );
+
+          await tx.warranty.create({
+            data: {
+              warrantyNumber,
+
+              billItemId: opts.billItemId,
+              billId: bill.id,
+              itemId: opts.itemId,
+              customerId: customerId || null,
+
+              batchId: batch.id,
+              supplierId: batch.supplierId,
+
+              serialNumber: serial,
+
+              months: opts.months,
+              startDate,
+              endDate,
+            },
+          });
+
+          issuedWarranties.push({
+            warrantyNumber,
+            itemName: opts.itemName,
+            serialNumber: serial,
+            months: opts.months,
+            endDate,
+          });
+        }
+      };
+
+      // =========================
       // PROCESS ITEMS
       // =========================
 
@@ -100,6 +199,35 @@ export async function POST(request: Request) {
               },
             },
           });
+
+          // VOID WARRANTIES ON THE RETURNED UNITS
+          //
+          // Returned goods must not keep live cover. One warranty row per
+          // unit, so void as many as came back — already-claimed ones are
+          // left alone since that history still matters.
+
+          const warrantiesToVoid = await tx.warranty.findMany({
+            where: {
+              billItemId: item.originalBillItemId,
+              status: { in: ["ACTIVE", "EXPIRED"] },
+            },
+            orderBy: { createdAt: "asc" },
+            take: Math.max(1, Math.round(absQty)),
+          });
+
+          if (warrantiesToVoid.length > 0) {
+            await tx.warranty.updateMany({
+              where: {
+                id: {
+                  in: warrantiesToVoid.map((w) => w.id),
+                },
+              },
+              data: {
+                status: "VOID",
+                notes: `Voided — item returned on invoice ${billNumber}`,
+              },
+            });
+          }
 
           // RESTORE ORIGINAL BATCH STOCK
 
@@ -185,6 +313,19 @@ export async function POST(request: Request) {
 
           let totalSoldQty = 0;
 
+          // WARRANTY REQUEST FOR THIS CART LINE
+          //
+          // The cashier may adjust the term at the till, but the product must
+          // be flagged eligible before anything is issued at all.
+
+          const warrantyMonths = currentItem.warrantyEligible
+            ? normaliseMonths(item.warrantyMonths)
+            : null;
+
+          const serialQueue: string[] = Array.isArray(item.serials)
+            ? [...item.serials]
+            : [];
+
           // ======================================================
           // CASE 1: USER SELECTED SPECIFIC BATCH
           // ======================================================
@@ -211,7 +352,7 @@ export async function POST(request: Request) {
 
             // CREATE BILL ITEM
 
-            await tx.billItem.create({
+            const createdBillItem = await tx.billItem.create({
               data: {
                 billId: bill.id,
                 itemId: item.id,
@@ -229,6 +370,16 @@ export async function POST(request: Request) {
                 totalPrice:
                   Number(item.price) * item.quantity,
               },
+            });
+
+            await issueWarranties({
+              billItemId: createdBillItem.id,
+              itemId: item.id,
+              batchId: selectedBatch.id,
+              quantity: item.quantity,
+              months: warrantyMonths,
+              serials: serialQueue,
+              itemName: currentItem.name,
             });
 
             // REDUCE SELECTED BATCH ONLY
@@ -290,7 +441,7 @@ export async function POST(request: Request) {
 
               // CREATE BILL ITEM
 
-              await tx.billItem.create({
+              const createdBillItem = await tx.billItem.create({
                 data: {
                   billId: bill.id,
                   itemId: item.id,
@@ -311,6 +462,16 @@ export async function POST(request: Request) {
                     Number(item.price || batch.sellingPrice) *
                     qtyToTake,
                 },
+              });
+
+              await issueWarranties({
+                billItemId: createdBillItem.id,
+                itemId: item.id,
+                batchId: batch.id,
+                quantity: qtyToTake,
+                months: warrantyMonths,
+                serials: serialQueue,
+                itemName: currentItem.name,
               });
 
               // REDUCE BATCH
@@ -414,13 +575,14 @@ export async function POST(request: Request) {
         },
       });
 
-      return bill;
+      return { bill, issuedWarranties };
     });
 
     return NextResponse.json(
       {
         success: true,
-        bill: result,
+        bill: result.bill,
+        warranties: result.issuedWarranties,
       },
       {
         status: 201,

@@ -112,6 +112,19 @@ export async function GET() {
 
           batchId: null,
 
+          // WARRANTY
+          // Legacy stock predates batch tracking, so there is no supplier
+          // warranty on record and none can be issued.
+
+          warrantyEligible:
+            item.warrantyEligible,
+
+          requiresSerial:
+            item.requiresSerial,
+
+          warrantyMonths:
+            null,
+
           createdAt:
             item.createdAt,
 
@@ -166,6 +179,21 @@ export async function GET() {
 
           batchId:
             batch.id,
+
+          // WARRANTY
+          // Both gates must pass: the product must be warranty-eligible AND
+          // this specific batch must have come with supplier cover.
+
+          warrantyEligible:
+            item.warrantyEligible,
+
+          requiresSerial:
+            item.requiresSerial,
+
+          warrantyMonths:
+            item.warrantyEligible
+              ? batch.warrantyMonths
+              : null,
 
           createdAt:
             item.createdAt,
@@ -244,6 +272,9 @@ export async function POST(
       reorderLevel,
       buyingPrice,
       sellingPrice,
+      warrantyEligible,
+      defaultWarrantyMonths,
+      requiresSerial,
     } = body;
 
     // VALIDATION
@@ -325,6 +356,33 @@ export async function POST(
             ),
 
           stockQty: 0,
+
+          // WARRANTY
+
+          warrantyEligible:
+            Boolean(
+              warrantyEligible
+            ),
+
+          defaultWarrantyMonths:
+            warrantyEligible &&
+            Number(
+              defaultWarrantyMonths
+            ) > 0
+              ? Math.round(
+                  Number(
+                    defaultWarrantyMonths
+                  )
+                )
+              : null,
+
+          requiresSerial:
+            requiresSerial ===
+            undefined
+              ? true
+              : Boolean(
+                  requiresSerial
+                ),
         },
       });
 

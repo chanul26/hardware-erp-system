@@ -342,6 +342,45 @@ export async function POST(
             }
           }
 
+          // WARRANTY ELIGIBILITY
+          //
+          // Warranty terms are only recorded for products flagged as
+          // warranty-eligible. Anything else silently drops the terms even if
+          // the client sent them.
+
+          const eligibleItems =
+            await tx.item.findMany({
+
+              where: {
+
+                id: {
+                  in: items.map(
+                    (
+                      item: any
+                    ) =>
+                      item.itemId
+                  ),
+                },
+
+                warrantyEligible:
+                  true,
+              },
+
+              select: {
+                id: true,
+              },
+
+            });
+
+          const eligibleIds =
+            new Set(
+              eligibleItems.map(
+                (
+                  item
+                ) => item.id
+              )
+            );
+
           // UPDATE INVENTORY + CREATE FIFO BATCHES
 
           for (const item of items) {
@@ -377,6 +416,29 @@ export async function POST(
 
             });
 
+            // WARRANTY TERMS FOR THIS SHIPMENT
+
+            const isEligible =
+              eligibleIds.has(
+                item.itemId
+              );
+
+            const months =
+              Number(
+                item.warrantyMonths
+              );
+
+            const warrantyMonths =
+              isEligible &&
+              Number.isFinite(
+                months
+              ) &&
+              months > 0
+                ? Math.round(
+                    months
+                  )
+                : null;
+
             // CREATE PURCHASE BATCH
 
             await tx.purchaseBatch.create({
@@ -401,6 +463,21 @@ export async function POST(
                   Number(
                     item.sellingPrice
                   ),
+
+                // WARRANTY
+
+                warrantyMonths,
+
+                supplierWarrantyRef:
+                  warrantyMonths
+                    ? item.supplierWarrantyRef ||
+                      null
+                    : null,
+
+                supplierId,
+
+                purchaseOrderId:
+                  po.id,
 
               },
 
