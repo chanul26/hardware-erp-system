@@ -76,7 +76,8 @@ model User {
   sessions Session[]
   bills    Bill[]
 
-  warrantyClaims WarrantyClaim[]
+  warrantyClaims    WarrantyClaim[]
+  moneyTransactions MoneyTransaction[]
 }
 
 model Customer {
@@ -481,4 +482,101 @@ model WarrantyClaim {
 
   @@index([warrantyId])
   @@index([status])
+}
+
+// ─────────────────────────────────────────────
+//  Money Management
+// ─────────────────────────────────────────────
+//
+// Sales already live in Payment/SupplierPayment, so nothing here re-records
+// takings. This module only tracks what the owner *does* with the money once
+// it is in the drawer: what he banks, what he spends, what he gives away.
+//
+// Two places hold money — the cash drawer, and each BankAccount. Every
+// transaction below moves money between those two, or out of the business
+// entirely. Balances are never stored; they are summed from the ledger so a
+// mis-keyed entry can be deleted and the balance simply corrects itself.
+
+model BankAccount {
+  id            String  @id @default(uuid())
+  name          String // What the owner calls it: "BOC Savings"
+  bankName      String?
+  accountNumber String?
+
+  // Where the balance started on the day the account was added to the system,
+  // so the ledger does not have to be back-filled from the account's opening.
+  openingBalance Decimal @default(0) @db.Decimal(14, 2)
+
+  // How much the owner intends to put in on a normal day / month. Purely a
+  // yardstick for the summary screen — nothing enforces it.
+  dailyTarget   Decimal? @db.Decimal(12, 2)
+  monthlyTarget Decimal? @db.Decimal(12, 2)
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions MoneyTransaction[]
+
+  @@index([isActive])
+}
+
+// Cash in hand is a running total, so it can only be trusted from a point the
+// owner actually counted the drawer. Without this, the figure would reach back
+// through every cash sale the shop ever made and every cash payment it ever
+// sent out — years of history that never sat in today's drawer — and come out
+// as a large, meaningless number.
+//
+// One row, id "default".
+model MoneySettings {
+  id String @id @default("default")
+
+  // The day the drawer was counted. Nothing before it counts towards cash.
+  cashTrackingStartDate DateTime?
+
+  // What was physically in the drawer on that morning.
+  openingCashFloat Decimal @default(0) @db.Decimal(14, 2)
+
+  updatedAt DateTime @updatedAt @default(now())
+}
+
+enum MoneyTxType {
+  DEPOSIT // cash drawer  → bank
+  WITHDRAWAL // bank         → cash drawer
+  EXPENSE // out of the business (rent, salaries, fuel…)
+  DONATION // out of the business, given away
+  OTHER_INCOME // in from something that is not a sale
+  ADJUSTMENT // correction / opening float; amount may be negative
+}
+
+model MoneyTransaction {
+  id     String      @id @default(uuid())
+  type   MoneyTxType
+  amount Decimal     @db.Decimal(14, 2)
+
+  // Which side of the business the money sits on. null means the cash drawer.
+  // For DEPOSIT/WITHDRAWAL this is the bank end of the move — the other end is
+  // always the drawer, so a deposit without a bank makes no sense.
+  bankAccountId String?
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  // Free-form on purpose: a hardware shop's spending categories change faster
+  // than a migration can keep up with.
+  category    String?
+  description String?
+  reference   String?
+
+  occurredAt DateTime @default(now())
+
+  createdByUserId String?
+  createdByUser   User?   @relation(fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([occurredAt])
+  @@index([type])
+  @@index([bankAccountId])
 }
