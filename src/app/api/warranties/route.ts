@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { daysRemaining, effectiveStatus } from "@/lib/warranty";
+import { normaliseNic, normalisePhone } from "@/lib/lk";
 
 export const dynamic = "force-dynamic";
 
@@ -86,6 +87,21 @@ export async function GET(req: Request) {
             },
           },
         },
+        // A customer at the counter reads their number out however they
+        // remember it — with spaces, or with +94. Matching the canonical form
+        // as well means the warranty is still found.
+        ...(normalisePhone(search) &&
+        normalisePhone(search) !== search
+          ? [
+              {
+                customer: {
+                  phone: {
+                    contains: normalisePhone(search) as string,
+                  },
+                },
+              },
+            ]
+          : []),
         {
           customer: {
             name: {
@@ -102,6 +118,18 @@ export async function GET(req: Request) {
             },
           },
         },
+        ...(normaliseNic(search) && normaliseNic(search) !== search
+          ? [
+              {
+                customer: {
+                  nic: {
+                    contains: normaliseNic(search) as string,
+                    mode: "insensitive",
+                  },
+                },
+              },
+            ]
+          : []),
         {
           item: {
             name: {

@@ -183,6 +183,21 @@ export async function POST(
                 method:
                   "CASH",
 
+                // Cash paid to a supplier normally comes from the owner's
+                // wallet rather than the shop till, and is often a mix of
+                // both — so the drawer's share is stated, not assumed, and
+                // can never exceed what was actually paid.
+                drawerAmount:
+                  Math.min(
+                    Math.max(
+                      Number(
+                        body.drawerAmount
+                      ) || 0,
+                      0
+                    ),
+                    finalAmountPaid
+                  ),
+
               },
 
             });

@@ -7,6 +7,9 @@ services:
       POSTGRES_USER: erp_user
       POSTGRES_PASSWORD: erp_password
       POSTGRES_DB: hardware_erp
+      # Timestamps are stored in UTC either way; this keeps anything read
+      # directly from psql in the same day as the application shows.
+      TZ: Asia/Colombo
     ports:
       - "5433:5432"
     volumes:
@@ -26,6 +29,9 @@ services:
     ports:
       - "3001:3001"
     environment:
+      # Daily totals are cut at Colombo midnight, so the container must not
+      # run on UTC — see the Dockerfile for why.
+      TZ: Asia/Colombo
       # Use the service name 'db' as the hostname
       DATABASE_URL: "postgresql://erp_user:erp_password@db:5432/hardware_erp?schema=public"
       NEXTAUTH_SECRET: "super-secret-12345"

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { normaliseNic, normalisePhone } from "@/lib/lk";
 
 export const dynamic = "force-dynamic"; // TECH LEAD FIX: Prevents Vercel caching crash
 
@@ -12,11 +13,24 @@ export async function GET(req: Request) {
 
   let where = {};
   if (search !== "") {
+    // A phone typed as "077 123 4567" has to find the number stored as
+    // "0771234567", so the search term goes through the same canonicalisation
+    // the record did. The raw term is kept as an alternative for names and
+    // partial numbers.
+    const phoneTerm = normalisePhone(search);
+    const nicTerm = normaliseNic(search);
+
     where = {
       OR: [
         { name: { contains: search, mode: "insensitive" } },
         { phone: { contains: search } },
+        ...(phoneTerm && phoneTerm !== search
+          ? [{ phone: { contains: phoneTerm } }]
+          : []),
         { nic: { contains: search, mode: "insensitive" } },
+        ...(nicTerm && nicTerm !== search
+          ? [{ nic: { contains: nicTerm, mode: "insensitive" } }]
+          : []),
       ],
     };
   }
@@ -63,8 +77,15 @@ export async function POST(req: Request) {
       );
     }
 
+    // Stored in one canonical shape so the counter can find the customer
+    // however the number happens to be typed next time.
     const customer = await prisma.customer.create({
-      data: { name, nic: nic || null, email: email || null, phone },
+      data: {
+        name,
+        nic: normaliseNic(nic),
+        email: email || null,
+        phone: normalisePhone(phone) || phone,
+      },
     });
 
     return NextResponse.json(customer);
@@ -84,7 +105,12 @@ export async function PUT(req: Request) {
 
     const updated = await prisma.customer.update({
       where: { id },
-      data: { name, nic: nic || null, email: email || null, phone },
+      data: {
+        name,
+        nic: normaliseNic(nic),
+        email: email || null,
+        phone: normalisePhone(phone) || phone,
+      },
     });
 
     return NextResponse.json(updated);

@@ -4,13 +4,13 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   bankEffect,
-  cashEffect,
   endOfDay,
   parseDayParam,
   startOfDay,
   startOfMonth,
   toDayString,
 } from "@/lib/money";
+import { computeCashInHand } from "@/lib/money-server";
 
 export const dynamic = "force-dynamic";
 
@@ -45,35 +45,24 @@ export async function GET(req: Request) {
     const dayEnd = endOfDay(day);
     const monthStart = startOfMonth(day);
 
-    // Cash in hand can only be counted from the day the drawer was last
-    // counted. Before that day the shop's cash sales and cash outgoings were
-    // never tracked here, so including them would produce a number that has
-    // no relation to what is actually in the drawer.
-    const settings = await prisma.moneySettings.findUnique({
-      where: { id: "default" },
-    });
-
-    const cashStart = settings?.cashTrackingStartDate
-      ? startOfDay(settings.cashTrackingStartDate)
-      : null;
-
-    const openingFloat = Number(settings?.openingCashFloat ?? 0);
-
-    const cashWindow = cashStart
-      ? { gte: cashStart, lte: dayEnd }
-      : { lte: dayEnd };
+    // Cash in hand is worked out by the same helper the day-end count uses, so
+    // the figure shown here and the figure a count is checked against can
+    // never drift apart.
+    const { cashInHand, cashStart, openingFloat } =
+      await computeCashInHand(dayEnd);
 
     const [
       accounts,
       dayPayments,
       monthPaymentsAgg,
       daySupplierPayments,
-      cashPaymentsToDate,
-      cashSupplierPaymentsToDate,
       ledgerToDate,
+      todaysCount,
     ] = await Promise.all([
+      // Closed accounts are fetched too. One that still holds money must keep
+      // showing, or closing it would quietly wipe that balance off the total
+      // and the money would appear to have evaporated.
       prisma.bankAccount.findMany({
-        where: { isActive: true },
         orderBy: { createdAt: "asc" },
       }),
 
@@ -90,24 +79,15 @@ export async function GET(req: Request) {
         _sum: { amount: true },
       }),
 
-      prisma.supplierPayment.groupBy({
-        by: ["method"],
-        where: { paidAt: { gte: dayStart, lte: dayEnd } },
-        _sum: { amount: true },
-      }),
-
-      // Cash in hand is a running figure, so these two span the whole tracking
-      // window rather than just the selected day.
-      prisma.payment.aggregate({
-        where: { method: "CASH", paidAt: cashWindow },
-        _sum: { amount: true },
-      }),
-
+      // Both figures at once: what the suppliers were paid in total, and how
+      // much of that the drawer actually funded.
       prisma.supplierPayment.aggregate({
-        where: { method: "CASH", paidAt: cashWindow },
-        _sum: { amount: true },
+        where: { paidAt: { gte: dayStart, lte: dayEnd } },
+        _sum: { amount: true, drawerAmount: true },
       }),
 
+      // Bank balances carry their own openingBalance, so unlike the cash side
+      // they need the whole ledger up to the selected day.
       prisma.moneyTransaction.findMany({
         where: { occurredAt: { lte: dayEnd } },
         select: {
@@ -117,6 +97,13 @@ export async function GET(req: Request) {
           category: true,
           description: true,
           occurredAt: true,
+        },
+      }),
+
+      prisma.cashCount.findUnique({
+        where: { countedFor: dayStart },
+        include: {
+          countedByUser: { select: { id: true, name: true } },
         },
       }),
     ]);
@@ -141,14 +128,13 @@ export async function GET(req: Request) {
 
     const cashRevenue = revenueByMethod.CASH;
 
-    const supplierPaidToday = daySupplierPayments.reduce(
-      (sum, row) => sum + (Number(row._sum.amount) || 0),
-      0
-    );
+    const supplierPaidToday =
+      Number(daySupplierPayments._sum.amount) || 0;
 
-    const supplierPaidCashToday = daySupplierPayments
-      .filter((row) => row.method === "CASH")
-      .reduce((sum, row) => sum + (Number(row._sum.amount) || 0), 0);
+    // Only the portion that came out of the till reduces the drawer. The rest
+    // was paid from a wallet or a bank and never passed through it.
+    const supplierPaidFromDrawerToday =
+      Number(daySupplierPayments._sum.drawerAmount) || 0;
 
     // ── The day's own ledger entries ──
 
@@ -190,24 +176,6 @@ export async function GET(req: Request) {
       (entry) => entry.type === "OTHER_INCOME"
     );
 
-    // ── Cash in hand ──
-    //
-    // What was counted in the drawer on the start day, plus every cash sale
-    // since, less every cash payment made to a supplier, plus whatever the
-    // ledger says was banked, spent or given away.
-    //
-    // Bank balances need no such window — each account carries its own
-    // openingBalance — so only the cash side is clipped here.
-
-    const cashInHand = cashStart
-      ? openingFloat +
-        (Number(cashPaymentsToDate._sum.amount) || 0) -
-        (Number(cashSupplierPaymentsToDate._sum.amount) || 0) +
-        ledgerToDate
-          .filter((entry) => entry.occurredAt >= cashStart)
-          .reduce((sum, entry) => sum + cashEffect(entry), 0)
-      : null;
-
     // What is left of *today's* cash takings once the banking and the day's
     // cash spending are accounted for. This is the number that tells the owner
     // whether he has finished putting the day away.
@@ -220,7 +188,7 @@ export async function GET(req: Request) {
           entry.bankAccountId === null &&
           (entry.type === "EXPENSE" || entry.type === "DONATION")
       ) -
-      supplierPaidCashToday;
+      supplierPaidFromDrawerToday;
 
     // ── Per bank ──
 
@@ -263,6 +231,7 @@ export async function GET(req: Request) {
         name: account.name,
         bankName: account.bankName,
         accountNumber: account.accountNumber,
+        isActive: account.isActive,
         balance,
         dailyTarget,
         monthlyTarget,
@@ -283,10 +252,16 @@ export async function GET(req: Request) {
       };
     });
 
-    const totalDailyTarget = banks.reduce(
-      (sum, bank) => sum + (bank.dailyTarget || 0),
-      0
+    // A closed account is only worth showing while it still holds money.
+    const visibleBanks = banks.filter(
+      (bank) => bank.isActive || bank.balance !== 0
     );
+
+    // Targets belong to accounts still in use, so a closed one cannot drag the
+    // day's savings target up.
+    const totalDailyTarget = banks
+      .filter((bank) => bank.isActive)
+      .reduce((sum, bank) => sum + (bank.dailyTarget || 0), 0);
 
     // ── Month to date ──
 
@@ -351,7 +326,7 @@ export async function GET(req: Request) {
           donations: donationsToday,
           otherIncome: otherIncomeToday,
           supplierPaid: supplierPaidToday,
-          supplierPaidCash: supplierPaidCashToday,
+          supplierPaidFromDrawer: supplierPaidFromDrawerToday,
           unallocatedCash: unallocatedCashToday,
           totalDailyTarget,
           targetShortfall: Math.max(
@@ -370,9 +345,21 @@ export async function GET(req: Request) {
           openingFloat,
         },
 
-        banks,
+        // Whether this day's drawer has been checked, and by how much it was
+        // out if so.
+        cashCount: todaysCount
+          ? {
+              countedAmount: Number(todaysCount.countedAmount),
+              expectedAmount: Number(todaysCount.expectedAmount),
+              variance: Number(todaysCount.variance),
+              reason: todaysCount.reason,
+              countedBy: todaysCount.countedByUser?.name || null,
+            }
+          : null,
 
-        totalBankBalance: banks.reduce(
+        banks: visibleBanks,
+
+        totalBankBalance: visibleBanks.reduce(
           (sum, bank) => sum + bank.balance,
           0
         ),

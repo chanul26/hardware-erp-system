@@ -17,6 +17,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
 
   // PAYMENT STATES
   const [paymentMethod, setPaymentMethod] = useState("CASH");
+  const [drawerAmount, setDrawerAmount] = useState("");
   const [cashAmount, setCashAmount] = useState("");
   const [chequeNumber, setChequeNumber] = useState("");
   const [bankName, setBankName] = useState("");
@@ -87,6 +88,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     setBankName("");
     setChequeDate("");
     setPaymentMethod("CASH");
+    setDrawerAmount("");
     
     // Nuke the local storage drafts
     localStorage.removeItem("erp_po_cart");
@@ -99,6 +101,16 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
 
   // CHEQUE AMOUNT
   const chequeAmount = paymentMethod === "CHEQUE" ? totalBillAmount : totalBillAmount - Number(cashAmount || 0);
+
+  // The part of this bill being settled in notes — the whole bill when paying
+  // cash, or just the cash leg of a mixed payment. The drawer can only have
+  // funded some of this, never more.
+  const cashPortion =
+    paymentMethod === "CASH"
+      ? totalBillAmount
+      : paymentMethod === "MIXED"
+      ? Number(cashAmount || 0)
+      : 0;
 
   // ─── SCANNER LOGIC ────────────────────────────────────────────────────────
   const handleScannerInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -284,6 +296,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
             supplierWarrantyRef: item.supplierWarrantyRef ?? null,
           })),
           paymentMethod,
+          drawerAmount: Math.min(Number(drawerAmount) || 0, cashPortion),
           amountPaid:
             paymentMethod === "CASH"
               ? Number(cashAmount || totalBillAmount)
@@ -563,6 +576,71 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                 <option value="MIXED">Cash + Cheque</option>
               </select>
             </div>
+
+            {/* Cash paid to a supplier usually comes from the owner's wallet,
+                not the shop till — and often from both at once. Only the
+                drawer's share reduces cash in hand on the Money page. */}
+            {(paymentMethod === "CASH" || paymentMethod === "MIXED") && (
+              <div className="rounded-md border border-gray-300 bg-gray-50 p-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  How much of this came out of the shop drawer?
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    max={cashPortion}
+                    value={drawerAmount}
+                    onChange={(e) => setDrawerAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-36 border border-gray-300 rounded-md p-2"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setDrawerAmount(String(cashPortion))}
+                    className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    All of it
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDrawerAmount("")}
+                    className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    None
+                  </button>
+                </div>
+
+                <p className="mt-2 text-xs text-gray-500">
+                  {Number(drawerAmount) > 0 ? (
+                    <>
+                      Rs. {Number(drawerAmount).toFixed(2)} from the drawer
+                      {cashPortion - Number(drawerAmount) > 0 && (
+                        <>
+                          , Rs.{" "}
+                          {(cashPortion - Number(drawerAmount)).toFixed(2)} from
+                          your wallet or bank
+                        </>
+                      )}
+                      .
+                    </>
+                  ) : (
+                    "Leave at zero if none of it came from the till — that is the usual case."
+                  )}
+                </p>
+
+                {Number(drawerAmount) > cashPortion && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    That is more than the Rs. {cashPortion.toFixed(2)} being
+                    paid in cash.
+                  </p>
+                )}
+              </div>
+            )}
 
             {paymentMethod === "MIXED" && (
               <div>

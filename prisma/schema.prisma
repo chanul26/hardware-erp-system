@@ -78,6 +78,7 @@ model User {
 
   warrantyClaims    WarrantyClaim[]
   moneyTransactions MoneyTransaction[]
+  cashCounts        CashCount[]
 }
 
 model Customer {
@@ -288,6 +289,17 @@ model SupplierPayment {
   amount Decimal @db.Decimal(12, 2)
 
   method PaymentMethod @default(CASH)
+
+  // How much of this payment physically came out of the shop drawer.
+  //
+  // Paying a supplier in cash does not mean the money came from the till — it
+  // usually comes from the owner's wallet or a bank transfer. It is also
+  // routinely split: part scraped out of the drawer, the rest made up from
+  // his own pocket. A yes/no flag cannot express that, so the drawer's share
+  // is recorded as an amount, and only this much is taken off cash in hand.
+  //
+  // 0 means none of it came from the till, which is the common case.
+  drawerAmount Decimal @default(0) @db.Decimal(14, 2)
 
   reference String?
 
@@ -540,6 +552,35 @@ model MoneySettings {
   openingCashFloat Decimal @default(0) @db.Decimal(14, 2)
 
   updatedAt DateTime @updatedAt @default(now())
+}
+
+// One drawer count, normally at the end of the day.
+//
+// The point of a count is not to tell the system what is in the drawer — it
+// already knows what *should* be there. The point is the gap between the two.
+// A silent re-baseline would swallow that gap, so the variance is stored and
+// the expected figure is frozen as it stood at the moment of counting.
+model CashCount {
+  id String @id @default(uuid())
+
+  // The shop day counted. One count per day replaces the previous one.
+  countedFor DateTime @unique
+
+  expectedAmount Decimal @db.Decimal(14, 2)
+  countedAmount  Decimal @db.Decimal(14, 2)
+
+  // counted − expected. Negative means the drawer is short.
+  variance Decimal @db.Decimal(14, 2)
+
+  reason String?
+
+  countedByUserId String?
+  countedByUser   User?   @relation(fields: [countedByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countedFor])
 }
 
 enum MoneyTxType {

@@ -21,6 +21,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# The shop's day is a Colombo day, and every daily total — takings, banking,
+# the drawer count, the reports date filters — is cut at local midnight. The
+# node images default to UTC, which would start the shop day at 5.30am and run
+# it into the next morning. tzdata is needed for the zone to resolve at all.
+RUN apk add --no-cache tzdata
+ENV TZ=Asia/Colombo
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
