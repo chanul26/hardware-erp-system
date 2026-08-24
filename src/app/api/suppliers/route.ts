@@ -1,95 +1,85 @@
-import { NextResponse } from "next/server";
+import { OrderStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { ok, parseBody, route } from "@/lib/api";
+import { requireManager } from "@/lib/authz";
+import { supplierCreateSchema } from "@/lib/validation";
 
-// The Advanced Tech Lead GET Route (Calculates Debt)
-export async function GET() {
-  try {
-    // 1. Fetch all suppliers AND their purchase orders
-    const suppliers = await prisma.supplier.findMany({
-      include: {
-        purchaseOrders: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
+export const dynamic = "force-dynamic";
 
-    // 2. Calculate the total debt for each supplier
-    const suppliersWithDebt = suppliers.map((supplier) => {
-      const totalDebt = supplier.purchaseOrders.reduce((sum, order) => {
-        // If the order isn't fully paid, add the remaining balance to the debt
-        const balance = Number(order.totalAmount) - Number(order.amountPaid);
-        return sum + (balance > 0 ? balance : 0);
-      }, 0);
+/**
+ * GET /api/suppliers — suppliers with what the business still owes each of them.
+ *
+ * Debt is `SUM(purchase order totals) - SUM(supplier payments)` — the same
+ * definition the settlement endpoint uses. The previous version derived it from
+ * PurchaseOrder.amountPaid instead, which excluded cheque payments entirely and
+ * so disagreed with the settlement logic on every cheque-paid delivery.
+ */
+export const GET = route("GET /api/suppliers", async () => {
+  await requireManager();
 
-      return {
-        id: supplier.id,
-        name: supplier.name,
-        phone: supplier.phone,
-        email: supplier.email,
-        address: supplier.address,
-        createdAt: supplier.createdAt,
-        totalDebt: totalDebt, // <-- THIS IS THE MAGIC VARIABLE YOUR UI NEEDS
-      };
-    });
+  const suppliers = await prisma.supplier.findMany({
+    where: { isActive: true },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      address: true,
+      createdAt: true,
+    },
+  });
 
-    return NextResponse.json({ success: true, data: suppliersWithDebt });
-  } catch (error) {
-    console.error("[SUPPLIER_GET_ERROR]", error);
-    return NextResponse.json(
-      { success: false, error: "Failed to fetch suppliers due to a server error." },
-      { status: 500 }
+  const ids = suppliers.map((s) => s.id);
+
+  const [ordered, paid] = await Promise.all([
+    ids.length
+      ? prisma.purchaseOrder.groupBy({
+          by: ["supplierId"],
+          where: { supplierId: { in: ids }, status: { not: OrderStatus.CANCELLED } },
+          _sum: { totalAmount: true },
+        })
+      : [],
+    ids.length
+      ? prisma.supplierPayment.groupBy({
+          by: ["supplierId"],
+          where: { supplierId: { in: ids } },
+          _sum: { amount: true },
+        })
+      : [],
+  ]);
+
+  const orderedBy = new Map(
+    ordered.map((r) => [r.supplierId, r._sum.totalAmount ?? new Prisma.Decimal(0)])
+  );
+  const paidBy = new Map(
+    paid.map((r) => [r.supplierId, r._sum.amount ?? new Prisma.Decimal(0)])
+  );
+
+  const data = suppliers.map((supplier) => {
+    const owed = (orderedBy.get(supplier.id) ?? new Prisma.Decimal(0)).minus(
+      paidBy.get(supplier.id) ?? new Prisma.Decimal(0)
     );
-  }
-}
 
-// The Standard POST Route (Saves new suppliers)
-export async function POST(request: Request) {
-  try {
-    let body;
-    try {
-      body = await request.json();
-    } catch (parseError) {
-      return NextResponse.json(
-        { success: false, error: "Invalid JSON payload provided." },
-        { status: 400 }
-      );
-    }
+    return { ...supplier, totalDebt: Number(Prisma.Decimal.max(owed, 0)) };
+  });
 
-    const { name, phone, email, address } = body;
+  return ok(data);
+});
 
-    if (!name || typeof name !== "string" || name.trim() === "") {
-      return NextResponse.json(
-        { success: false, error: "Supplier name is required" },
-        { status: 400 }
-      );
-    }
+/** POST /api/suppliers — register a supplier. */
+export const POST = route("POST /api/suppliers", async (req) => {
+  await requireManager();
+  const body = await parseBody(req, supplierCreateSchema);
 
-    if (email && email.trim() !== "") {
-      const existing = await prisma.supplier.findUnique({ 
-        where: { email: email.trim() } 
-      });
-      if (existing) {
-        return NextResponse.json(
-          { success: false, error: "A supplier with this email already exists" },
-          { status: 400 }
-        );
-      }
-    }
+  const supplier = await prisma.supplier.create({
+    data: {
+      name: body.name,
+      phone: body.phone ?? null,
+      email: body.email ?? null,
+      address: body.address ?? null,
+    },
+  });
 
-    const newSupplier = await prisma.supplier.create({
-      data: {
-        name: name.trim(),
-        phone: phone?.trim() || null,
-        email: email?.trim() || null,
-        address: address?.trim() || null,
-      },
-    });
-
-    return NextResponse.json({ success: true, data: newSupplier }, { status: 201 });
-  } catch (error) {
-    console.error("[SUPPLIER_POST_ERROR]", error);
-    return NextResponse.json(
-      { success: false, error: "An unexpected error occurred while saving the supplier." },
-      { status: 500 }
-    );
-  }
-}
+  return ok(supplier, 201);
+});

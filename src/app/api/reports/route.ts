@@ -1,465 +1,286 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/auth";
+import { BillStatus, ChequeStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { ok, parseQuery, route } from "@/lib/api";
+import { requireAdmin } from "@/lib/authz";
+import { reportsQuerySchema } from "@/lib/validation";
 
-export async function GET(req: Request) {
-  try {
-    const session = await getServerSession(
-      authOptions
-    );
+export const dynamic = "force-dynamic";
 
-    if (
-      !session ||
-      session.user.role !== "ADMIN"
-    ) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+/**
+ * Hard ceiling on any list this endpoint returns.
+ *
+ * The previous version loaded every bill ever written (with customer and
+ * payment rows attached) just to compute a top-5 list, so it got slower every
+ * day the shop traded. Aggregates are now done in the database, and the
+ * remaining detail lists are capped. When a list is truncated the response says
+ * so, rather than quietly showing partial data.
+ */
+const MAX_ROWS = 500;
 
-    // =========================================
-    // FILTERS
-    // =========================================
+function startOfRange(range: "today" | "week" | "month" | "year"): Date {
+  const from = new Date();
 
-    const { searchParams } = new URL(
-      req.url
-    );
+  switch (range) {
+    case "today":
+      from.setHours(0, 0, 0, 0);
+      break;
+    case "week":
+      from.setDate(from.getDate() - 7);
+      break;
+    case "month":
+      from.setMonth(from.getMonth() - 1);
+      break;
+    case "year":
+      from.setFullYear(from.getFullYear() - 1);
+      break;
+  }
 
-    const range =
-      searchParams.get("range") ||
-      "today";
+  return from;
+}
 
-    const supplierId =
-      searchParams.get("supplierId");
+const capped = <T>(rows: T[]) => ({
+  rows: rows.slice(0, MAX_ROWS),
+  truncated: rows.length > MAX_ROWS,
+});
 
-    // NEW CHEQUE FILTERS
+export const GET = route("GET /api/reports", async (req) => {
+  await requireAdmin();
 
-    const chequeSearch =
-      searchParams.get(
-        "chequeSearch"
-      ) || "";
+  const query = parseQuery(req, reportsQuerySchema);
+  const from = startOfRange(query.range);
+  // Previously ignored: the UI sent `stockRange` and the API filtered stock
+  // additions by `range`, so the control appeared to work but did nothing.
+  const stockFrom = startOfRange(query.stockRange);
 
-    const chequeDateFilter =
-      searchParams.get(
-        "chequeDate"
-      ) || "";
+  const [
+    revenueAgg,
+    billedAgg,
+    paidAgg,
+    lowStockItems,
+    billsByCustomer,
+    paymentsByCustomer,
+    stockAdditions,
+    dailyBills,
+    chequeReports,
+    upcomingCheques,
+    suppliers,
+    returnedBills,
+  ] = await Promise.all([
+    prisma.payment.aggregate({
+      where: { paidAt: { gte: from } },
+      _sum: { amount: true },
+    }),
 
-    // =========================================
-    // DATE FILTER
-    // =========================================
+    prisma.bill.aggregate({
+      where: { status: { not: BillStatus.CANCELLED } },
+      _sum: { totalAmount: true },
+    }),
 
-    const startDate = new Date();
+    prisma.payment.aggregate({ _sum: { amount: true } }),
 
-    if (range === "today") {
-      startDate.setHours(
-        0,
-        0,
-        0,
-        0
-      );
-    }
+    // Compares against each item's own reorderLevel. The old query hardcoded
+    // `stockQty <= 5`, so the configurable field was ignored and this panel
+    // disagreed with the inventory table.
+    prisma.$queryRaw<
+      {
+        id: string;
+        name: string;
+        barcode: string;
+        unit: string;
+        stockQty: Prisma.Decimal;
+        reorderLevel: number;
+      }[]
+    >`
+      SELECT "id", "name", "barcode", "unit", "stockQty", "reorderLevel"
+        FROM "Item"
+       WHERE "isActive" = true
+         AND "stockQty" <= "reorderLevel"
+       ORDER BY ("stockQty" - "reorderLevel") ASC, "name" ASC
+       LIMIT 50
+    `,
 
-    if (range === "week") {
-      startDate.setDate(
-        startDate.getDate() - 7
-      );
-    }
+    // Debtors computed by the database, not by loading every bill into memory.
+    prisma.bill.groupBy({
+      by: ["customerId"],
+      where: { customerId: { not: null }, status: { not: BillStatus.CANCELLED } },
+      _sum: { totalAmount: true },
+    }),
 
-    if (range === "month") {
-      startDate.setMonth(
-        startDate.getMonth() - 1
-      );
-    }
+    prisma.payment.groupBy({
+      by: ["customerId"],
+      where: { customerId: { not: null } },
+      _sum: { amount: true },
+    }),
 
-    if (range === "year") {
-      startDate.setFullYear(
-        startDate.getFullYear() - 1
-      );
-    }
+    prisma.purchaseOrder.findMany({
+      where: {
+        createdAt: { gte: stockFrom },
+        ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: MAX_ROWS + 1,
+      include: {
+        supplier: { select: { id: true, name: true } },
+        purchaseItems: { include: { item: { select: { name: true, unit: true } } } },
+        supplierPayments: { include: { supplierCheque: true } },
+      },
+    }),
 
-    // =========================================
-    // REVENUE
-    // =========================================
+    prisma.bill.findMany({
+      where: { createdAt: { gte: from } },
+      orderBy: { createdAt: "desc" },
+      take: MAX_ROWS + 1,
+      include: {
+        customer: { select: { id: true, name: true } },
+        billItems: { include: { item: { select: { name: true, unit: true } } } },
+        payments: true,
+        cheques: true,
+      },
+    }),
 
-    const todaysPayments =
-      await prisma.payment.aggregate({
-        where: {
-          createdAt: {
-            gte: startDate,
-          },
-        },
-
-        _sum: {
-          amount: true,
-        },
-      });
-
-    // =========================================
-    // OUTSTANDING DEBT
-    // =========================================
-
-    const totalBilled =
-      await prisma.bill.aggregate({
-        _sum: {
-          totalAmount: true,
-        },
-      });
-
-    const totalPaid =
-      await prisma.payment.aggregate({
-        _sum: {
-          amount: true,
-        },
-      });
-
-    const outstandingDebt =
-      (Number(
-        totalBilled._sum.totalAmount
-      ) || 0) -
-      (Number(totalPaid._sum.amount) ||
-        0);
-
-    // =========================================
-    // LOW STOCK ITEMS
-    // =========================================
-
-    const lowStockItems =
-      await prisma.item.findMany({
-        where: {
-          stockQty: {
-            lte: 5,
-          },
-        },
-
-        orderBy: {
-          stockQty: "asc",
-        },
-
-        take: 5,
-      });
-
-    // =========================================
-    // TOP DEBTORS
-    // =========================================
-
-    const unpaidBills =
-      await prisma.bill.findMany({
-        where: {
-          customerId: {
-            not: null,
-          },
-        },
-
-        include: {
-          customer: true,
-          payments: true,
-        },
-      });
-
-    const debtorsMap = new Map<
-      string,
-      number
-    >();
-
-    unpaidBills.forEach((bill) => {
-      const paidSoFar =
-        bill.payments.reduce(
-          (sum, p) =>
-            sum + Number(p.amount),
-          0
-        );
-
-      const debtForThisBill =
-        Number(bill.totalAmount) -
-        paidSoFar;
-
-      if (debtForThisBill > 0) {
-        const customerName =
-          bill.customer?.name ||
-          "Unknown";
-
-        const currentDebt =
-          debtorsMap.get(customerName) ||
-          0;
-
-        debtorsMap.set(
-          customerName,
-          currentDebt + debtForThisBill
-        );
-      }
-    });
-
-    const topDebtors = Array.from(
-      debtorsMap,
-      ([name, amount]) => ({
-        name,
-        amount,
-      })
-    )
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5);
-
-    // =========================================
-    // STOCK ADDITIONS REPORT
-    // =========================================
-
-    const stockAdditions =
-      await prisma.purchaseOrder.findMany({
-        where: {
-          createdAt: {
-            gte: startDate,
-          },
-
-          ...(supplierId
-            ? { supplierId }
-            : {}),
-        },
-
-        include: {
-          supplier: true,
-
-          purchaseItems: {
-            include: {
-              item: true,
-            },
-          },
-
-          supplierPayments: {
-            include: {
-              supplierCheque: true,
-            },
-          },
-        },
-
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
-
-    // =========================================
-    // DAILY BILLS REPORT
-    // =========================================
-
-    const dailyBills =
-      await prisma.bill.findMany({
-
-        where: {
-          createdAt: {
-            gte: startDate,
-          },
-        },
-
-        include: {
-
-          customer: true,
-
-          billItems: {
-
-            include: {
-
-              item: true,
-
-            },
-
-          },
-
-          payments: true,
-
-          cheques: true,
-
-        },
-
-        orderBy: {
-          createdAt: "desc",
-        },
-
-      });
-
-    // =========================================
-    // CHEQUE REPORT
-    // =========================================
-
-    const chequeDateWhere =
-      chequeDateFilter
-        ? {
-            chequeDate: {
-              gte: new Date(
-                `${chequeDateFilter}T00:00:00`
-              ),
-
-              lte: new Date(
-                `${chequeDateFilter}T23:59:59`
-              ),
-            },
-          }
-        : {};
-
-    const chequeReports =
-      await prisma.supplierCheque.findMany({
-        where: {
-          ...chequeDateWhere,
-
-          OR: [
-            {
-              chequeNumber: {
-                contains:
-                  chequeSearch,
-                mode: "insensitive",
+    prisma.supplierCheque.findMany({
+      where: {
+        ...(query.chequeDate && !Number.isNaN(Date.parse(query.chequeDate))
+          ? {
+              chequeDate: {
+                gte: new Date(`${query.chequeDate}T00:00:00`),
+                lte: new Date(`${query.chequeDate}T23:59:59.999`),
               },
-            },
-
-            {
-              supplierPayment: {
-                supplier: {
-                  name: {
-                    contains:
-                      chequeSearch,
-                    mode: "insensitive",
+            }
+          : {}),
+        ...(query.chequeSearch
+          ? {
+              OR: [
+                {
+                  chequeNumber: {
+                    contains: query.chequeSearch,
+                    mode: "insensitive" as const,
                   },
                 },
-              },
-            },
-          ],
-        },
-
-        include: {
-          supplierPayment: {
-            include: {
-              supplier: true,
-            },
-          },
-        },
-
-        orderBy: {
-          chequeDate: "desc",
-        },
-      });
-      // =========================================
-      // UPCOMING CHEQUE ALERTS
-      // =========================================
-
-      const today = new Date();
-
-      const twoDaysLater = new Date();
-      twoDaysLater.setDate(
-        twoDaysLater.getDate() + 2
-      );
-
-      const upcomingCheques =
-        await prisma.supplierCheque.findMany({
-          where: {
-            status: "PENDING",
-
-            chequeDate: {
-              gte: today,
-              lte: twoDaysLater,
-            },
-          },
-
-          include: {
-            supplierPayment: {
-              include: {
-                supplier: true,
-              },
-            },
-          },
-
-          orderBy: {
-            chequeDate: "asc",
-          },
-        });    
-
-    // =========================================
-    // SUPPLIERS LIST
-    // =========================================
-
-    const suppliers =
-      await prisma.supplier.findMany({
-        orderBy: {
-          name: "asc",
-        },
-      });
-
-    const returnedBills =
-      await prisma.bill.findMany({
-        where: {
-          billItems: {
-            some: {
-              quantity: {
-                lt: 0,
-              },
-            },
-          },
-
-          createdAt: {
-            gte: startDate,
-          },
-        },
-
-        include: {
-          customer: true,
-
-          billItems: {
-            include: {
-              item: true,
-            },
-          },
-
-          payments: true,
-        },
-
-        orderBy: {
-          createdAt: "desc",
-        },
-      });      
-
-    // =========================================
-    // RETURN RESPONSE
-    // =========================================
-
-    return NextResponse.json({
-      success: true,
-
-      data: {
-        todayRevenue:
-          Number(
-            todaysPayments._sum.amount
-          ) || 0,
-
-        outstandingDebt,
-
-        lowStockItems,
-
-        topDebtors,
-
-        stockAdditions,
-
-        dailyBills,
-
-        chequeReports,
-
-        suppliers,
-
-        returnedBills,
-        upcomingCheques,
+                {
+                  supplierPayment: {
+                    supplier: {
+                      name: {
+                        contains: query.chequeSearch,
+                        mode: "insensitive" as const,
+                      },
+                    },
+                  },
+                },
+              ],
+            }
+          : {}),
       },
-    });
-  } catch (error) {
-    console.error(
-      "[GET /api/reports]",
-      error
-    );
-
-    return NextResponse.json(
-      {
-        error:
-          "Failed to generate reports",
+      orderBy: { chequeDate: "desc" },
+      take: MAX_ROWS + 1,
+      include: {
+        supplierPayment: { include: { supplier: { select: { name: true } } } },
       },
-      {
-        status: 500,
-      }
-    );
-  }
-}
+    }),
+
+    prisma.supplierCheque.findMany({
+      where: {
+        status: ChequeStatus.PENDING,
+        chequeDate: {
+          gte: new Date(),
+          lte: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+        },
+      },
+      orderBy: { chequeDate: "asc" },
+      take: 50,
+      include: {
+        supplierPayment: { include: { supplier: { select: { name: true } } } },
+      },
+    }),
+
+    prisma.supplier.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+
+    prisma.bill.findMany({
+      where: {
+        createdAt: { gte: from },
+        billItems: { some: { quantity: { lt: 0 } } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: MAX_ROWS + 1,
+      include: {
+        customer: { select: { id: true, name: true } },
+        billItems: { include: { item: { select: { name: true, unit: true } } } },
+        payments: true,
+      },
+    }),
+  ]);
+
+  // ── Top debtors, assembled from the two aggregates ──
+  const paidByCustomer = new Map(
+    paymentsByCustomer.map((row) => [
+      row.customerId,
+      row._sum.amount ?? new Prisma.Decimal(0),
+    ])
+  );
+
+  const debtorTotals = billsByCustomer
+    .map((row) => ({
+      customerId: row.customerId!,
+      amount: (row._sum.totalAmount ?? new Prisma.Decimal(0)).minus(
+        paidByCustomer.get(row.customerId) ?? new Prisma.Decimal(0)
+      ),
+    }))
+    .filter((row) => row.amount.gt(0))
+    .sort((a, b) => b.amount.comparedTo(a.amount))
+    .slice(0, 10);
+
+  const debtorNames = debtorTotals.length
+    ? await prisma.customer.findMany({
+        where: { id: { in: debtorTotals.map((d) => d.customerId) } },
+        select: { id: true, name: true },
+      })
+    : [];
+
+  const nameById = new Map(debtorNames.map((c) => [c.id, c.name]));
+
+  const topDebtors = debtorTotals.map((row) => ({
+    id: row.customerId,
+    name: nameById.get(row.customerId) ?? "Unknown",
+    amount: Number(row.amount),
+  }));
+
+  const outstandingDebt = (billedAgg._sum.totalAmount ?? new Prisma.Decimal(0)).minus(
+    paidAgg._sum.amount ?? new Prisma.Decimal(0)
+  );
+
+  const stock = capped(stockAdditions);
+  const bills = capped(dailyBills);
+  const cheques = capped(chequeReports);
+  const returns = capped(returnedBills);
+
+  return ok({
+    todayRevenue: Number(revenueAgg._sum.amount ?? 0),
+    outstandingDebt: Number(Prisma.Decimal.max(outstandingDebt, 0)),
+    lowStockItems: lowStockItems.map((item) => ({
+      ...item,
+      stockQty: Number(item.stockQty),
+    })),
+    topDebtors,
+    stockAdditions: stock.rows,
+    dailyBills: bills.rows,
+    chequeReports: cheques.rows,
+    upcomingCheques,
+    suppliers,
+    returnedBills: returns.rows,
+    meta: {
+      range: query.range,
+      stockRange: query.stockRange,
+      maxRows: MAX_ROWS,
+      truncated: {
+        stockAdditions: stock.truncated,
+        dailyBills: bills.truncated,
+        chequeReports: cheques.truncated,
+        returnedBills: returns.truncated,
+      },
+    },
+  });
+});

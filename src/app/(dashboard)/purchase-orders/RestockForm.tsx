@@ -12,7 +12,6 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
 
   // Form State
   const [supplierId, setSupplierId] = useState("");
-  const [amountPaid, setAmountPaid] = useState("");
   const [loading, setLoading] = useState(false);
 
   // PAYMENT STATES
@@ -82,7 +81,6 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   const clearPOCart = () => {
     setDeliveryCart([]);
     setSupplierId("");
-    setAmountPaid("");
     setCashAmount("");
     setChequeNumber("");
     setBankName("");
@@ -310,18 +308,32 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to restock");
+      const json = await response.json();
 
-      alert("✅ Multi-item delivery logged, stock updated, and supplier accounts updated!");
-      
+      if (!response.ok) {
+        // Surface what the server actually rejected instead of a generic
+        // "please try again" that gives the operator nothing to act on.
+        const detail = json.details
+          ? Object.values(json.details as Record<string, string[]>)
+              .flat()
+              .join(" ")
+          : "";
+        throw new Error(detail || json.error || "Failed to record the delivery.");
+      }
+
+      alert(
+        `✅ Delivery ${json.data.orderNumber} recorded. Stock and supplier balance updated.`
+      );
+
       // Call the helper to wipe UI and local storage
       clearPOCart();
-      router.refresh(); 
+      router.refresh();
       setTimeout(() => searchInputRef.current?.focus(), 100);
-      
+
     } catch (error) {
-      console.error(error);
-      alert("❌ Error processing delivery. Please try again.");
+      alert(
+        `❌ ${error instanceof Error ? error.message : "Error processing delivery."}`
+      );
     } finally {
       setLoading(false);
     }

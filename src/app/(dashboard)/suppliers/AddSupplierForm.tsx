@@ -34,7 +34,7 @@ export default function AddSupplierForm({ onSuccess }: { onSuccess?: () => void 
       let result;
       try {
         result = await response.json();
-      } catch (parseError) {
+      } catch {
         throw new Error("Server returned an invalid response. Please try again.");
       }
 

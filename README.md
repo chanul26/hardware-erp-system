@@ -1,138 +1,191 @@
-# 🚀 Hardware ERP System: Technical Foundation & Onboarding Guide
+# Hardware ERP System
 
-Welcome to the Hardware ERP System. Over the past few days, the core foundation of this application has been architected, secured, and deployed to our `dev` branch. 
-
-This document contains everything you need to know about the system architecture, our security protocols, and exactly how to get this running on your local machine (Windows or Mac) so we can start building features immediately.
-
----
-
-## 🛠 1. The Technology Stack
-We are using a modern, type-safe, and highly scalable stack:
-* **Framework:** Next.js 14 (App Router)
-* **Language:** TypeScript (Strict mode enabled)
-* **Styling:** Tailwind CSS + shadcn/ui
-* **Database:** PostgreSQL 16 (Dockerized to prevent local conflicts)
-* **ORM:** Prisma v6 (Stable)
-* **Authentication:** NextAuth.js (Credentials Provider + bcryptjs)
+Point-of-sale and inventory management for a hardware and paint shop. Handles
+billing with barcode scanning, FIFO batch costing, customer and supplier
+ledgers, cheque tracking, paint-mixing consumption, and reporting.
 
 ---
 
-## 🏗 2. Architecture & Design Decisions
-To ensure this system can handle real financial data and to prevent it from clashing with our other university projects (like LamiGo), several strict architectural decisions have been made:
+## 1. Technology
 
-### A. Database Isolation (Crucial)
-We are running our PostgreSQL database inside a Docker container. 
-* **Port Mapping:** It is mapped as `5433:5432`. This means on your host machine, you will connect to port **`5433`**. 
-* **Why?** If you have another PostgreSQL instance running (like LamiGo) on the default `5432` port, this guarantees the two databases will never conflict and crash your system.
-
-### B. Financial Data Safety
-Standard number types (`Float` or `Int`) cause rounding errors when calculating currency. In our `schema.prisma`, all money-related fields (`buyingPrice`, `sellingPrice`, `totalAmount`) are strictly typed as `Decimal`.
-
-### C. Authentication & Role-Based Access Control (RBAC)
-We have implemented a strict, enterprise-grade security perimeter using NextAuth and Next.js Middleware.
-* **No Public Sign-Ups:** There is no "Register" page. This is an internal business tool. 
-* **The Genesis Admin:** The master account (the Uncle) was injected directly into the database via a backend seed script.
-* **Staff Management:** Only an `ADMIN` can log in, access the `/users` dashboard, and manually generate accounts for Cashiers and Managers.
-
-**The Middleware Vault:**
-Our `src/middleware.ts` actively monitors every click. 
-* **Admins** have full access to the `/dashboard` and `/users`.
-* **Cashiers/Managers** are physically blocked from the Admin dashboard. If they try to access it, the middleware instantly kicks them to the `/billing` (Point of Sale) page.
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 14 (App Router) |
+| Language | TypeScript, strict mode |
+| Styling | Tailwind CSS |
+| Database | PostgreSQL 16 (Docker) |
+| ORM | Prisma 6 |
+| Auth | NextAuth (credentials + bcrypt, JWT sessions) |
+| Validation | Zod |
+| Tests | Vitest (integration, against a real database) |
 
 ---
 
-## 💻 3. Local Setup Guide (Windows & Mac)
+## 2. Local setup
 
-Follow these exact steps to get the environment running on your machine. Do not skip any steps.
+### Prerequisites
 
-### Prerequisites (For all OS)
-1. **Node.js:** Ensure you have Node.js version 20+ installed.
-2. **Docker:** Ensure Docker Desktop is installed and actively running in the background.
-3. **Git:** Ensure Git is installed.
+Node.js 20+, Docker Desktop running, Git.
 
-### Step-by-Step Installation
+### Steps
 
-**1. Clone the Repository & Enter the Dev Branch**
-We do not work on `main`. We integrate on `dev`.
+**1. Clone and install**
+
 ```bash
 git clone -b dev https://github.com/chanul26/hardware-erp-system.git
 cd hardware-erp-system
-```
-
-**2. Install Dependencies**
-```bash
 npm install
 ```
 
-**3. Configure Environment Variables**
-* Duplicate the `.env.example` file and rename the copy to `.env`.
-* (You do not need to change any of the default values for local development. The Docker connection strings are already perfect).
+**2. Create your `.env`**
 
-**4. Boot the Isolated Database**
-Start the PostgreSQL Docker container. (It will run quietly in the background on port 5433).
 ```bash
-docker compose up -d
+cp .env.example .env
 ```
 
-**5. Sync Database & Generate Types**
-Push our Prisma schema to the new Docker database and generate the TypeScript client.
+Then generate a signing secret and put it in `.env` as `NEXTAUTH_SECRET`:
+
 ```bash
-npx prisma db push
+openssl rand -base64 32
+```
+
+> `.env` is gitignored. Never commit it.
+>
+> Note `DIRECT_URL` in `.env.example` — Prisma requires it and **every** Prisma
+> command fails without it, including `generate`. For a plain PostgreSQL setup
+> it is the same value as `DATABASE_URL`.
+
+**3. Start the database**
+
+```bash
+docker compose up -d db
+```
+
+Postgres is published on **127.0.0.1:5433** — loopback only, so it is not
+reachable from the network.
+
+**4. Apply the schema and generate the client**
+
+```bash
+npx prisma migrate deploy
 npx prisma generate
 ```
 
-**6. Inject the Master Admin (The Seed Script)**
-Run this script to securely hash and inject the default Admin account into your local database.
+Use `npm run db:migrate` instead when you are *changing* the schema; it creates
+a new migration file. Never use `prisma db push` — it leaves no migration
+history, so the schema cannot be reproduced or deployed.
+
+**5. Create the admin account**
+
 ```bash
-npm run prisma:seed
-# Note: Ensure "prisma": {"seed": "tsx prisma/seed.ts"} is in package.json
-# Alternatively, run: npx tsx prisma/seed.ts
+SEED_ADMIN_PASSWORD='choose-a-strong-password' npm run db:seed
 ```
 
-**7. Start the Development Server**
-To avoid port conflicts with other Next.js apps, we run this app on port **3001**.
+Omit `SEED_ADMIN_PASSWORD` in development and the seed generates a random
+password and prints it once. In production it is required.
+
+**6. Run**
+
 ```bash
 npm run dev
 ```
 
-### Verification
-1. Open your browser to `http://localhost:3001`.
-2. Click **Sign In**.
-3. Log in with the Genesis credentials:
-   * **Email:** `admin@hardware.com`
-   * **Password:** `Admin@2026!`
-4. You should be securely routed to the Admin Dashboard. Test creating a Cashier account in the "Staff Management" tab!
+Open <http://localhost:3001> and sign in with the email and password from step 5.
 
 ---
 
-## 🌿 4. Team Workflow & CI/CD
+## 3. Everyday commands
 
-To prevent us from overwriting each other's code, we are using a strict branching model protected by a GitHub Actions CI pipeline.
+```bash
+npm run dev        # dev server on :3001
+npm run build      # production build (typecheck + lint must pass)
+npm test           # integration tests
+npm run verify     # typecheck + lint + tests — run before pushing
+npm run db:studio  # browse the database
+```
 
-**The Golden Rules:**
-1. **Never push to `main` or `dev` directly.**
-2. When starting a new task, branch off `dev`:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. When finished, push your branch and open a **Pull Request (PR)** targeting `dev`.
+### Tests
 
-**The CI Pipeline (`.github/workflows/ci.yml`)**
-When you open a PR, our GitHub Action will automatically boot up a cloud server and test your code. It will run:
-* `npm run lint` (Checks for syntax/formatting errors)
-* `npx tsc --noEmit` (Checks for strict TypeScript errors)
-* A test build of the Next.js application.
+Tests run against a separate `hardware_erp_test` database, created once with:
 
-**If your code fails the CI pipeline, you cannot merge it.** Always run `npm run lint` and `npx tsc --noEmit` locally before you push!
+```bash
+docker exec hardware_erp_db psql -U erp_user -d postgres -c "CREATE DATABASE hardware_erp_test"
+```
+
+They truncate between cases, so they never touch development data.
 
 ---
 
-## 🎯 5. Next Steps / Current Objectives
-The foundation is locked. We are now moving into Feature Development. The immediate next modules to tackle are:
-1. **Inventory API:** Building the endpoints to create items, scan barcodes, and check stock levels.
-2. **Point of Sale (POS) UI:** Building the `/billing` page for cashiers to scan items and generate bills.
+## 4. Architecture notes
 
-Let's assign tasks and start building!
+Things worth knowing before changing code.
 
-***
+### Money and quantities
 
+Money is `Decimal(12,2)`, quantities are `Decimal(12,3)` — never `Float`.
+Binary floats cannot represent currency exactly, and the shop sells paint,
+cement and wire by weight and length, so fractional quantities are normal.
+
+### The server owns the money
+
+`POST /api/bills` does **not** accept `subtotal` or `totalAmount`. The client
+proposes a unit price; the server re-reads the cost layer being sold from,
+refuses anything at or below cost, and computes every total itself.
+
+### One definition of debt
+
+`src/lib/ledger.ts` is the single source of truth. `Bill.amountPaid` /
+`Bill.status` and `PurchaseOrder.amountPaid` / `.paymentStatus` are caches of the
+payment tables, re-derived on every write. Never set them directly.
+
+### The inventory invariant
+
+```
+Item.stockQty === SUM(PurchaseBatch.remainingQty)
+```
+
+Always true. Enforced by `CHECK` constraints, by mutating both inside one
+transaction, and asserted in the tests. `findStockDiscrepancies()` in
+`src/lib/inventory.ts` returns violations — it should always return nothing.
+
+### Authorization is two layers
+
+`src/middleware.ts` is a coarse gate whose matcher is an *exclusion* list, so a
+new route is protected by default. Every API handler independently calls
+`requireAuth` / `requireRole` from `src/lib/authz.ts` **before parsing the body**,
+so a mistake in the matcher cannot expose an endpoint on its own.
+
+### Stock changes go through `src/lib/inventory.ts`
+
+`adjustStock`, `consumeFifo`, `consumeBatch` and `restoreBatch` put their guard
+in the SQL `WHERE` clause, so the check and the write cannot be separated by a
+concurrent transaction. Do not write `Item.stockQty` directly.
+
+---
+
+## 5. Team workflow
+
+1. Never push to `main` or `dev` directly.
+2. Branch from `dev`: `git checkout -b feature/your-feature-name`
+3. Run `npm run verify` before pushing.
+4. Open a pull request against `dev`.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, migrations, tests and a
+production build against a throwaway PostgreSQL service. All of them must pass.
+
+---
+
+## 6. Before deploying
+
+**Read `bugs.md` first.** Its pre-deployment gate lists what must be true before
+this is exposed to a network, and its Known Limitations section records what is
+deliberately unfinished.
+
+The short version:
+
+- Generate a fresh `NEXTAUTH_SECRET` on the server; never reuse a development value.
+- Change the seeded admin password.
+- Do not publish the Postgres port.
+- Put the app behind a reverse proxy with TLS — sign-in posts credentials, and
+  the app itself speaks plain HTTP.
+- Set up backups, and test a restore.

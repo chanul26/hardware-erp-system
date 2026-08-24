@@ -16,6 +16,9 @@ export default function AddItemForm({
   const [loading, setLoading] =
     useState(false);
 
+  const [error, setError] =
+    useState<string | null>(null);
+
   const [selectedCategory, setSelectedCategory] =
     useState("General");
 
@@ -41,6 +44,8 @@ export default function AddItemForm({
     e.preventDefault();
 
     setLoading(true);
+
+    setError(null);
 
     const formData =
       new FormData(
@@ -92,10 +97,9 @@ export default function AddItemForm({
         )
       ),
 
-      // TEMPORARY DEFAULTS
-      // (Needed until full FIFO migration)
-
-      buyingPrice: 0,
+      buyingPrice: Number(
+        formData.get("buyingPrice") || 0
+      ),
 
       sellingPrice: 0,
 
@@ -114,6 +118,9 @@ export default function AddItemForm({
         warrantyEligible
           ? requiresSerial
           : false,
+      sellingPrice: Number(
+        formData.get("sellingPrice") || 0
+      ),
     };
 
     try {
@@ -141,15 +148,21 @@ export default function AddItemForm({
 
       if (!response.ok) {
 
+        // Surface per-field validation messages, not just a generic failure.
+        const detail = result.details
+          ? Object.values(
+              result.details as Record<string, string[]>
+            )
+              .flat()
+              .join(" ")
+          : "";
+
         throw new Error(
+          detail ||
           result.error ||
           "Failed to add item"
         );
       }
-
-      alert(
-        "✅ Item successfully registered!"
-      );
 
       router.refresh();
 
@@ -157,8 +170,10 @@ export default function AddItemForm({
 
     } catch (error: any) {
 
-      alert(
-        `❌ Error: ${error.message}`
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to add item"
       );
 
     } finally {
@@ -197,6 +212,12 @@ export default function AddItemForm({
       </div>
 
       {/* FORM */}
+
+      {error && (
+        <div className="mb-5 rounded-md bg-red-50 p-3 text-sm font-medium text-red-700">
+          {error}
+        </div>
+      )}
 
       <form
         onSubmit={handleSubmit}
@@ -362,15 +383,74 @@ export default function AddItemForm({
 
         </div>
 
+        {/* PRICING
+            These inputs replace hardcoded zeros. A product registered with no
+            price could not be sold until it had been through a restock, and
+            the below-cost guard had nothing to compare against. */}
+
+        <div>
+
+          <label
+            htmlFor="buyingPrice"
+            className="block text-sm font-medium text-gray-700"
+          >
+            Buying Price (Rs.)
+          </label>
+
+          <input
+            id="buyingPrice"
+            name="buyingPrice"
+            type="number"
+            step="0.01"
+            min="0"
+            defaultValue="0"
+            className="w-full border p-3 rounded-md mt-1"
+          />
+
+          <p className="text-xs text-gray-500 mt-1">
+            Updated automatically on each delivery.
+          </p>
+
+        </div>
+
+        <div>
+
+          <label
+            htmlFor="sellingPrice"
+            className="block text-sm font-medium text-gray-700"
+          >
+            Selling Price (Rs.)
+          </label>
+
+          <input
+            id="sellingPrice"
+            name="sellingPrice"
+            type="number"
+            step="0.01"
+            min="0"
+            defaultValue="0"
+            className="w-full border p-3 rounded-md mt-1"
+          />
+
+          <p className="text-xs text-gray-500 mt-1">
+            Must be at or above the buying price.
+          </p>
+
+        </div>
+
         {/* DESCRIPTION */}
 
         <div className="md:col-span-2">
 
-          <label className="block text-sm font-medium text-gray-700">
+          <label
+            htmlFor="description"
+            className="block text-sm font-medium text-gray-700"
+          >
             Description
           </label>
 
           <input
+            id="description"
             name="description"
             className="w-full border p-3 rounded-md mt-1"
           />

@@ -165,7 +165,8 @@ type Supplier = {
 export default function ReportsPage() {
   const [report, setReport] = useState<ReportData | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [loading, setLoading] = useState(true); // <-- FIX: Added loading state
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedBill, setSelectedBill] = useState<any | null>(null);
 
   const [selectedPO, setSelectedPO] =useState<any>(null);
@@ -216,20 +217,48 @@ export default function ReportsPage() {
 
   // LOAD REPORTS
   const loadReports = async () => {
-    setLoading(true); // <-- FIX: Start loading
-    const res = await fetch(
-      `/api/reports?range=${range}&stockRange=${stockRange}&supplierId=${stockSupplier}&chequeSearch=${chequeSearch}&chequeDate=${chequeDate}`
-    );
-    const data = await res.json();
-    setReport(data.data);
-    setLoading(false); // <-- FIX: Stop loading
+    setLoading(true);
+    setLoadError(null);
+
+    try {
+      const params = new URLSearchParams({
+        range,
+        stockRange,
+        chequeSearch,
+        chequeDate,
+      });
+      if (stockSupplier) params.set("supplierId", stockSupplier);
+
+      const res = await fetch(`/api/reports?${params.toString()}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          res.status === 401
+            ? "Your session has expired. Please sign in again."
+            : json.error || "Could not load reports."
+        );
+      }
+
+      setReport(json.data);
+    } catch (err) {
+      // Without this the loading shield below never lifts and the page spins
+      // forever on any failure.
+      setLoadError(err instanceof Error ? err.message : "Could not load reports.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   // LOAD SUPPLIERS
   const loadSuppliers = async () => {
-    const res = await fetch("/api/suppliers");
-    const data = await res.json();
-    setSuppliers(data.data || []);
+    try {
+      const res = await fetch("/api/suppliers");
+      const json = await res.json();
+      if (res.ok) setSuppliers(json.data ?? []);
+    } catch {
+      setSuppliers([]);
+    }
   };
 
   useEffect(() => {
@@ -263,8 +292,7 @@ const filteredDebtors = useMemo(() => {
   );
 }, [report, debtorSearch]);
 
-// --- FIX: The Loading Shield ---
-if (loading || !report) {
+if (loading) {
   return (
     <div className="flex h-[calc(100vh-8rem)] items-center justify-center">
       <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -273,6 +301,29 @@ if (loading || !report) {
         <p className="font-medium">
           Loading Business Analytics...
         </p>
+      </div>
+    </div>
+  );
+}
+
+// A failure must be distinguishable from a slow query. Previously both looked
+// identical and the spinner never stopped.
+if (loadError || !report) {
+  return (
+    <div className="flex h-[calc(100vh-8rem)] items-center justify-center p-6">
+      <div className="max-w-md rounded-xl border border-destructive/30 bg-destructive/10 p-6 text-center">
+        <h2 className="font-bold text-lg text-foreground">
+          Could not load reports
+        </h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          {loadError ?? "No data was returned."}
+        </p>
+        <button
+          onClick={loadReports}
+          className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Try again
+        </button>
       </div>
     </div>
   );
@@ -299,34 +350,45 @@ if (loading || !report) {
         passedDate,
       }),
     });
-    if (res.ok) {
-      alert("Cheque marked as cleared");
-      setShowPassModal(false);
-      setPassedDate("");
-      loadReports();
+    const json = await res.json();
+
+    if (!res.ok) {
+      alert(json.error || "Could not update the cheque.");
+      return;
     }
+
+    alert("Cheque marked as cleared.");
+    setShowPassModal(false);
+    setPassedDate("");
+    loadReports();
   };
 
-  // MARK CHEQUE RETURNED
+  // MARK CHEQUE RETURNED (BOUNCED)
   const markChequeReturned = async (chequeId: string) => {
-    const confirmed = confirm("Are you sure this cheque was returned?");
+    const confirmed = confirm(
+      "Mark this cheque as bounced?\n\nThe payment will be reversed and the amount will show as owed to the supplier again."
+    );
     if (!confirmed) return;
+
     const res = await fetch("/api/cheques/return", {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        chequeId,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chequeId }),
     });
-    if (res.ok) {
-      alert("Cheque marked as returned");
-      loadReports();
+
+    const json = await res.json();
+
+    if (!res.ok) {
+      alert(json.error || "Could not update the cheque.");
+      return;
     }
+
+    alert(json.data.message);
+    loadReports();
   };
 
-  // EXPORT PDF
+  // Opens the browser print dialog; "Save as PDF" is the destination the user
+  // picks there. This is not server-side PDF generation.
   const exportPDF = () => {
     window.print();
   };
@@ -340,7 +402,7 @@ if (loading || !report) {
           onClick={exportPDF}
           className="bg-black text-white px-5 py-2 rounded-lg hover:bg-gray-800"
         >
-          Export PDF
+          Print / Save as PDF
         </button>
       </div>
 
@@ -1310,26 +1372,15 @@ if (loading || !report) {
 
           <span className="text-2xl font-bold text-green-600">
 
-            Rs. {
-
-              selectedBill.billItems?.reduce(
-                (total: number, item: any) => {
-
-                  return (
-                    total +
-                    (
-                      (
-                        Number(item.unitPrice || 0) -
-                        Number(item.buyingPrice || 0)
-                      ) * Number(item.quantity || 0)
-                    )
-                  );
-
-                },
+            Rs. {(
+              (selectedBill.billItems ?? []).reduce(
+                (total: number, item: any) =>
+                  total +
+                  (Number(item.unitPrice || 0) - Number(item.buyingPrice || 0)) *
+                    Number(item.quantity || 0),
                 0
-              ) - (selectedBill.discount || 0)
-
-            }
+              ) - Number(selectedBill.discount || 0)
+            ).toFixed(2)}
 
           </span>
 

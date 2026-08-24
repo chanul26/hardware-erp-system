@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Package, AlertTriangle, DollarSign, TrendingDown, Users, CreditCard } from "lucide-react";
+import { AlertTriangle, DollarSign, TrendingDown, Users } from "lucide-react";
 
 export default function DashboardPage() {
   const [data, setData] = useState<any>(null);
@@ -9,7 +9,10 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setError(null);
+
     fetch("/api/reports")
       .then(async (res) => {
         // A login that outlives the account it points at — after a database
@@ -35,6 +38,22 @@ export default function DashboardPage() {
       })
       .finally(() => setLoading(false));
   }, []);
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(
+            res.status === 401
+              ? "Your session has expired. Please sign in again."
+              : json.error || "Could not load analytics."
+          );
+        }
+        return json;
+      })
+      .then((json) => setData(json.data))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
 
   if (loading) {
     return <div className="p-6 flex justify-center text-gray-500">Loading Business Analytics...</div>;
@@ -74,6 +93,24 @@ export default function DashboardPage() {
         >
           Try again
         </button>
+  // Previously the render fell through to `data.todayRevenue` with data === null
+  // whenever the fetch failed, throwing and leaving a blank page.
+  if (error || !data) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-6 text-center">
+          <AlertTriangle className="h-8 w-8 text-destructive mx-auto mb-3" />
+          <h2 className="font-bold text-lg text-foreground">Could not load the dashboard</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {error ?? "No data was returned."}
+          </p>
+          <button
+            onClick={load}
+            className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }
@@ -92,6 +129,8 @@ export default function DashboardPage() {
             <div>
               <p className="text-sm font-medium text-gray-500">Today's Cash In</p>
               <h3 className="text-2xl font-bold text-gray-900 mt-1">Rs. {Number(data.todayRevenue || 0).toLocaleString()}</h3>
+              <p className="text-sm font-medium text-gray-500">Today&apos;s Cash In</p>
+              <h3 className="text-2xl font-bold text-gray-900 mt-1">Rs. {data.todayRevenue.toLocaleString()}</h3>
             </div>
             <div className="p-3 bg-green-50 text-green-600 rounded-lg"><DollarSign className="w-5 h-5" /></div>
           </div>

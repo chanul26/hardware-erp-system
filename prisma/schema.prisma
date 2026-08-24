@@ -1,5 +1,15 @@
-// This is your Prisma schema file
-// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Hardware ERP — data model
+//
+// Conventions:
+//  * Money is Decimal(12,2). Never Float — binary floats cannot represent
+//    currency exactly and the errors compound across a ledger.
+//  * Quantities are Decimal(12,3). The shop sells paint, cement and wire by
+//    weight and length, so fractional quantities are normal; Float would drift
+//    and leave batches stranded at 0.0000001.
+//  * Status columns are enums, not free text, so an invalid state cannot be
+//    written at all.
+//  * Every foreign key is indexed. PostgreSQL does not index FK columns
+//    automatically and Prisma does not add them.
 
 generator client {
   provider = "prisma-client-js"
@@ -12,7 +22,9 @@ datasource db {
 }
 
 // ─────────────────────────────────────────────
-//  NextAuth Required Models
+//  NextAuth models
+//  Retained for compatibility with the NextAuth schema. The app uses the JWT
+//  session strategy with no PrismaAdapter, so these are currently unwritten.
 // ─────────────────────────────────────────────
 
 model Account {
@@ -32,6 +44,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
@@ -41,6 +54,8 @@ model Session {
   expires      DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -52,7 +67,7 @@ model VerificationToken {
 }
 
 // ─────────────────────────────────────────────
-//  Core ERP Models
+//  Enums
 // ─────────────────────────────────────────────
 
 enum Role {
@@ -60,6 +75,53 @@ enum Role {
   CASHIER
   MANAGER
 }
+
+enum BillStatus {
+  PENDING
+  PARTIAL
+  PAID
+  CANCELLED
+}
+
+enum PurchasePaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  CHEQUE
+  BANK_TRANSFER
+}
+
+enum ChequeStatus {
+  PENDING
+  CLEARED
+  BOUNCED
+  CANCELLED
+}
+
+enum OrderStatus {
+  DRAFT
+  ORDERED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+enum StockMovementType {
+  SALE
+  RETURN
+  PURCHASE
+  MIXING
+  ADJUSTMENT
+}
+
+// ─────────────────────────────────────────────
+//  Core models
+// ─────────────────────────────────────────────
 
 model User {
   id            String    @id @default(uuid())
@@ -69,6 +131,9 @@ model User {
   image         String?
   password      String?
   role          Role      @default(CASHIER)
+  /// Soft disable. Staff who have raised bills cannot be deleted, so accounts
+  /// are deactivated instead; login is refused when false.
+  isActive      Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -79,6 +144,12 @@ model User {
   warrantyClaims    WarrantyClaim[]
   moneyTransactions MoneyTransaction[]
   cashCounts        CashCount[]
+  accounts       Account[]
+  sessions       Session[]
+  bills          Bill[]
+  stockMovements StockMovement[]
+
+  @@index([role])
 }
 
 model Customer {
@@ -88,6 +159,9 @@ model Customer {
   phone     String?
   email     String?  @unique
   address   String?
+  /// Archive flag. Customers with financial history must never be deleted —
+  /// doing so would orphan their bills and erase the debt trail.
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -95,6 +169,12 @@ model Customer {
   payments   Payment[]
   cheques    Cheque[]
   warranties Warranty[]
+  bills    Bill[]
+  payments Payment[]
+  cheques  Cheque[]
+
+  @@index([name])
+  @@index([isActive])
 }
 
 model Supplier {
@@ -103,6 +183,7 @@ model Supplier {
   phone     String?
   email     String?  @unique
   address   String?
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -110,6 +191,9 @@ model Supplier {
   supplierPayments SupplierPayment[]
   purchaseBatches  PurchaseBatch[]
   warranties       Warranty[]
+
+  @@index([name])
+  @@index([isActive])
 }
 
 model Item {
@@ -119,10 +203,14 @@ model Item {
   description  String?
   category     String?
   unit         String   @default("pcs")
-  stockQty     Float    @default(0)
+  /// Master stock level. Invariant: equals the sum of remainingQty across this
+  /// item's purchase batches. Enforced by a CHECK constraint (>= 0) and by
+  /// always mutating both in the same transaction.
+  stockQty     Decimal  @default(0) @db.Decimal(12, 3)
   reorderLevel Int      @default(5)
   buyingPrice  Decimal  @db.Decimal(12, 2)
   sellingPrice Decimal  @db.Decimal(12, 2)
+  isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -141,22 +229,29 @@ model Item {
   stockMovements  StockMovement[]
   purchaseBatches PurchaseBatch[]
   warranties      Warranty[]
+
+  @@index([name])
+  @@index([category])
+  @@index([isActive])
+  @@index([stockQty])
 }
 
 model Bill {
-  id          String   @id @default(uuid())
-  billNumber  String   @unique
+  id          String     @id @default(uuid())
+  billNumber  String     @unique
   customerId  String?
   userId      String
-  status      String   @default("PENDING") // PENDING | PAID | PARTIAL | CANCELLED
-  subtotal    Decimal  @db.Decimal(12, 2)
-  discount    Decimal  @default(0) @db.Decimal(12, 2)
-  tax         Decimal  @default(0) @db.Decimal(12, 2)
-  totalAmount Decimal  @db.Decimal(12, 2)
-  amountPaid  Decimal  @default(0) @db.Decimal(12, 2) // NEW: Tracks exactly how much the customer paid
+  /// Derived from the payment ledger on every write — never set by the client.
+  status      BillStatus @default(PENDING)
+  subtotal    Decimal    @db.Decimal(12, 2)
+  discount    Decimal    @default(0) @db.Decimal(12, 2)
+  tax         Decimal    @default(0) @db.Decimal(12, 2)
+  totalAmount Decimal    @db.Decimal(12, 2)
+  /// Always equals the sum of this bill's payments.
+  amountPaid  Decimal    @default(0) @db.Decimal(12, 2)
   notes       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   customer   Customer?  @relation(fields: [customerId], references: [id])
   user       User       @relation(fields: [userId], references: [id])
@@ -193,12 +288,39 @@ model BillItem {
 
   warranties Warranty[]
 }
+  customer  Customer?  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  billItems BillItem[]
+  payments  Payment[]
+  cheques   Cheque[]
 
-enum PaymentMethod {
-  CASH
-  CARD
-  CHEQUE
-  BANK_TRANSFER
+  @@index([customerId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model BillItem {
+  id          String  @id @default(uuid())
+  billId      String
+  itemId      String
+  batchId     String?
+  quantity    Decimal @db.Decimal(12, 3)
+  returnedQty Decimal @default(0) @db.Decimal(12, 3)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  /// Cost of goods at the moment of sale, captured from the batch so that
+  /// later price changes cannot rewrite historical margin.
+  buyingPrice Decimal @default(0) @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  totalPrice  Decimal @db.Decimal(12, 2)
+
+  bill  Bill           @relation(fields: [billId], references: [id], onDelete: Cascade)
+  item  Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  batch PurchaseBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([billId])
+  @@index([itemId])
+  @@index([batchId])
 }
 
 model Payment {
@@ -208,18 +330,17 @@ model Payment {
   amount     Decimal       @db.Decimal(12, 2)
   method     PaymentMethod @default(CASH)
   reference  String?
+  /// Set when this payment reverses another (a refund or a bounced cheque).
+  reversesId String?
   paidAt     DateTime      @default(now())
   createdAt  DateTime      @default(now())
 
-  bill     Bill      @relation(fields: [billId], references: [id], onDelete: Cascade)
-  customer Customer? @relation(fields: [customerId], references: [id])
-}
+  bill     Bill      @relation(fields: [billId], references: [id], onDelete: Restrict)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
 
-enum ChequeStatus {
-  PENDING
-  CLEARED
-  BOUNCED
-  CANCELLED
+  @@index([billId])
+  @@index([customerId])
+  @@index([paidAt])
 }
 
 model Cheque {
@@ -236,48 +357,56 @@ model Cheque {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
-  bill     Bill      @relation(fields: [billId], references: [id], onDelete: Cascade)
-  customer Customer? @relation(fields: [customerId], references: [id])
-}
+  bill     Bill      @relation(fields: [billId], references: [id], onDelete: Restrict)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
 
-enum OrderStatus {
-  DRAFT
-  ORDERED
-  PARTIAL
-  RECEIVED
-  CANCELLED
+  @@index([billId])
+  @@index([customerId])
+  @@index([status])
+  @@index([chequeDate])
 }
 
 model PurchaseOrder {
-  id            String      @id @default(uuid())
-  orderNumber   String      @unique
+  id            String                @id @default(uuid())
+  orderNumber   String                @unique
   supplierId    String
-  status        OrderStatus @default(DRAFT) // Tracks fulfillment (received goods)
-  paymentStatus String      @default("UNPAID") // NEW: Tracks financials (UNPAID | PARTIAL | PAID)
-  totalAmount   Decimal     @db.Decimal(12, 2)
-  amountPaid    Decimal     @default(0) @db.Decimal(12, 2) // NEW: Tracks exactly how much Uncle paid
+  status        OrderStatus           @default(DRAFT)
+  /// Derived from the supplier payment ledger — never set by the client.
+  paymentStatus PurchasePaymentStatus @default(UNPAID)
+  totalAmount   Decimal               @db.Decimal(12, 2)
+  /// Always equals the sum of this order's supplier payments.
+  amountPaid    Decimal               @default(0) @db.Decimal(12, 2)
   notes         String?
   orderedAt     DateTime?
   receivedAt    DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
 
-  supplier         Supplier          @relation(fields: [supplierId], references: [id])
+  supplier         Supplier          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   purchaseItems    PurchaseItem[]
   supplierPayments SupplierPayment[]
+  purchaseBatches  PurchaseBatch[]
+
+  @@index([supplierId])
+  @@index([createdAt])
+  @@index([paymentStatus])
+  @@index([status])
 }
 
 model PurchaseItem {
   id              String  @id @default(uuid())
   purchaseOrderId String
   itemId          String
-  quantity        Float
+  quantity        Decimal @db.Decimal(12, 3)
   unitCost        Decimal @db.Decimal(12, 2)
   totalCost       Decimal @db.Decimal(12, 2)
-  receivedQty     Float   @default(0)
+  receivedQty     Decimal @default(0) @db.Decimal(12, 3)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  item          Item          @relation(fields: [itemId], references: [id])
+  item          Item          @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@index([purchaseOrderId])
+  @@index([itemId])
 }
 
 model SupplierPayment {
@@ -620,4 +749,98 @@ model MoneyTransaction {
   @@index([occurredAt])
   @@index([type])
   @@index([bankAccountId])
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  supplierId      String
+  amount          Decimal       @db.Decimal(12, 2)
+  method          PaymentMethod @default(CASH)
+  reference       String?
+  /// Set when this payment reverses another (a bounced cheque).
+  reversesId      String?
+  paidAt          DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+
+  purchaseOrder  PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  supplier       Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierCheque SupplierCheque?
+
+  @@index([purchaseOrderId])
+  @@index([supplierId])
+  @@index([paidAt])
+}
+
+model SupplierCheque {
+  id                String       @id @default(uuid())
+  supplierPaymentId String       @unique
+  chequeNumber      String
+  bank              String
+  amount            Decimal      @db.Decimal(12, 2)
+  chequeDate        DateTime
+  passedDate        DateTime?
+  status            ChequeStatus @default(PENDING)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  supplierPayment SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([chequeDate])
+  @@index([chequeNumber])
+}
+
+model StockMovement {
+  id        String            @id @default(uuid())
+  itemId    String
+  type      StockMovementType
+  /// Signed: negative for stock leaving, positive for stock arriving.
+  quantity  Decimal           @db.Decimal(12, 3)
+  /// Stock level immediately after this movement, for point-in-time audit.
+  balance   Decimal           @db.Decimal(12, 3)
+  purpose   String?
+  note      String?
+  /// Who caused the movement, and which document it belongs to.
+  userId    String?
+  billId    String?
+  createdAt DateTime          @default(now())
+
+  item Item  @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([itemId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([purpose])
+}
+
+model PurchaseBatch {
+  id              String   @id @default(uuid())
+  itemId          String
+  /// Traceability: which delivery and supplier this cost layer came from.
+  purchaseOrderId String?
+  supplierId      String?
+  quantity        Decimal  @db.Decimal(12, 3)
+  remainingQty    Decimal  @db.Decimal(12, 3)
+  buyingPrice     Decimal  @db.Decimal(12, 2)
+  sellingPrice    Decimal  @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+
+  item          Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  billItems     BillItem[]
+
+  @@index([itemId])
+  @@index([purchaseOrderId])
+  @@index([supplierId])
+  // Drives the FIFO lookup: oldest batch with stock remaining, per item.
+  @@index([itemId, remainingQty, createdAt])
+}
+
+/// Source of sequential document numbers. Incremented inside the same
+/// transaction as the document it numbers, so numbers are gapless under
+/// concurrency and cannot collide.
+model DocumentCounter {
+  id    String @id
+  value Int    @default(0)
 }

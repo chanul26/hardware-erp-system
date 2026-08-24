@@ -1,226 +1,52 @@
-import { NextResponse } from "next/server";
-
+import { StockMovementType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { notFound, ok, parseBody, route } from "@/lib/api";
+import { requireManager } from "@/lib/authz";
+import { mixingSchema } from "@/lib/validation";
+import { adjustStock, consumeFifo, dec, recordMovement } from "@/lib/inventory";
 
-export async function POST(
-  req: Request
-) {
-  try {
+/**
+ * POST /api/items/mixing — consume stock for paint mixing.
+ *
+ * The batch read now happens inside the transaction with row locks, and the
+ * master stock is only reduced by what the batches actually covered. Previously
+ * the batches were read outside the transaction and the master total was
+ * decremented by the full requested amount regardless, so an over-consumption
+ * silently pushed stockQty and the batch totals out of agreement.
+ */
+export const POST = route("POST /api/items/mixing", async (req) => {
+  const user = await requireManager();
+  const body = await parseBody(req, mixingSchema);
 
-    const body =
-      await req.json();
+  const item = await prisma.item.findUnique({
+    where: { id: body.itemId },
+    select: { id: true, name: true, isActive: true },
+  });
 
-    const {
-      itemId,
-      quantity,
-      note,
-      purpose,
-    } = body;
+  if (!item) throw notFound("Item not found.");
 
-    // VALIDATION
+  const quantity = dec(body.quantity);
 
-    if (
-      !itemId ||
-      !quantity ||
-      quantity <= 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid mixing request",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
+  await prisma.$transaction(
+    async (tx) => {
+      // Throws if the batches cannot cover the quantity — the transaction rolls
+      // back rather than leaving the invariant broken.
+      await consumeFifo(tx, item.id, quantity, item.name);
 
-    // PURPOSE VALIDATION
+      const balance = await adjustStock(tx, item.id, quantity.negated(), item.name);
 
-    if (!purpose) {
-      return NextResponse.json(
-        {
-          error:
-            "Please select a purpose",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    // FIND ITEM
-
-    const item =
-      await prisma.item.findUnique({
-        where: {
-          id: itemId,
-        },
+      await recordMovement(tx, {
+        itemId: item.id,
+        type: StockMovementType.MIXING,
+        quantity: quantity.negated(),
+        balance,
+        userId: user.id,
+        purpose: body.purpose,
+        note: body.note ?? "Used for paint mixing",
       });
+    },
+    { timeout: 15_000 }
+  );
 
-    if (!item) {
-      return NextResponse.json(
-        {
-          error:
-            "Item not found",
-        },
-        {
-          status: 404,
-        }
-      );
-    }
-
-    // CHECK STOCK
-
-    if (
-      item.stockQty <
-      quantity
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Not enough stock available",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    // FIFO BATCHES
-
-    const batches =
-      await prisma.purchaseBatch.findMany({
-
-        where: {
-          itemId,
-          remainingQty: {
-            gt: 0,
-          },
-        },
-
-        orderBy: {
-          createdAt: "asc",
-        },
-      });
-
-    if (
-      batches.length === 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "No purchase batches found",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    // TRANSACTION
-
-    await prisma.$transaction(
-      async (tx) => {
-
-        let remainingToUse =
-          quantity;
-
-        // FIFO CONSUMPTION
-
-        for (const batch of batches) {
-
-          if (
-            remainingToUse <= 0
-          ) {
-            break;
-          }
-
-          const consumeQty =
-            Math.min(
-              remainingToUse,
-              batch.remainingQty
-            );
-
-          // REDUCE BATCH STOCK
-
-          await tx.purchaseBatch.update({
-
-            where: {
-              id: batch.id,
-            },
-
-            data: {
-              remainingQty: {
-                decrement:
-                  consumeQty,
-              },
-            },
-          });
-
-          remainingToUse -=
-            consumeQty;
-        }
-
-        // REDUCE MASTER STOCK
-
-        await tx.item.update({
-
-          where: {
-            id: itemId,
-          },
-
-          data: {
-            stockQty: {
-              decrement:
-                quantity,
-            },
-          },
-        });
-
-        // CREATE STOCK MOVEMENT
-
-        await tx.stockMovement.create({
-
-          data: {
-
-            itemId,
-
-            quantity:
-              -quantity,
-
-            type: "MIXING",
-
-            purpose,
-
-            note:
-              note ||
-              "Used for paint mixing",
-          },
-        });
-      }
-    );
-
-    return NextResponse.json({
-
-      success: true,
-
-      message:
-        "Stock used for mixing successfully",
-    });
-
-  } catch (error) {
-
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        error:
-          "Failed to process mixing",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
-}
+  return ok({ message: "Stock recorded as used for mixing." });
+});

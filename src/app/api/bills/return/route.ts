@@ -1,51 +1,58 @@
-  import { NextResponse } from "next/server";
-  import { prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
+import { badRequest, notFound, ok, parseQuery, route } from "@/lib/api";
+import { requireManager } from "@/lib/authz";
+import { billNumberQuerySchema } from "@/lib/validation";
 
-  export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic";
 
-  export async function GET(req: Request) {
-    try {
-      const { searchParams } = new URL(req.url);
-      const billNumber = searchParams.get("billNumber");
+/**
+ * GET /api/bills/return?billNumber= — look up an invoice to return against.
+ *
+ * Manager-only. This exposes full invoice contents and the linked customer, so
+ * it was previously an unauthenticated enumeration of every sale in the system.
+ */
+export const GET = route("GET /api/bills/return", async (req) => {
+  await requireManager();
+  const { billNumber } = parseQuery(req, billNumberQuerySchema);
 
-      if (!billNumber) {
-        return NextResponse.json({ error: "Invoice number is required" }, { status: 400 });
-      }
+  const bill = await prisma.bill.findUnique({
+    where: { billNumber },
+    include: {
+      billItems: {
+        include: { item: { select: { id: true, name: true, unit: true } } },
+      },
+      customer: { select: { id: true, name: true, phone: true } },
+    },
+  });
 
-      const bill = await prisma.bill.findUnique({
-        where: { billNumber },
-        include: { 
-          billItems: { include: { item: true } }, 
-          customer: true 
-        }
-      });
+  if (!bill) throw notFound("No invoice found with that number.");
 
-      if (!bill) {
-        return NextResponse.json({ error: "Invoice not found in the system" }, { status: 404 });
-      }
+  // Only original sale lines can be returned; the negative lines on this bill
+  // are themselves returns.
+  const returnable = bill.billItems
+    .filter((line) => line.quantity.gt(0))
+    .map((line) => ({
+      id: line.id,
+      itemId: line.itemId,
+      item: line.item,
+      quantity: Number(line.quantity),
+      returnedQty: Number(line.returnedQty),
+      unitPrice: Number(line.unitPrice),
+      availableToReturn: Number(line.quantity.minus(line.returnedQty)),
+    }))
+    .filter((line) => line.availableToReturn > 0);
 
-      // SUPER LOGIC: Calculate exactly what is left to return based on raw math, not status text.
-      const availableItems = bill.billItems
-        .map(item => ({
-          ...item,
-          availableToReturn: item.quantity - item.returnedQty
-        }))
-        .filter(item => item.availableToReturn > 0); // Only keep items that haven't been fully returned
-
-      if (availableItems.length === 0) {
-        return NextResponse.json({ error: "All items from this invoice have already been returned." }, { status: 400 });
-      }
-
-      return NextResponse.json({ 
-        success: true, 
-        data: {
-          ...bill,
-          billItems: availableItems
-        } 
-      });
-
-    } catch (error: any) {
-      console.error("[GET /api/bills/return]", error);
-      return NextResponse.json({ error: "Failed to fetch invoice data" }, { status: 500 });
-    }
+  if (returnable.length === 0) {
+    throw badRequest("Every item on this invoice has already been returned.");
   }
+
+  return ok({
+    id: bill.id,
+    billNumber: bill.billNumber,
+    createdAt: bill.createdAt,
+    totalAmount: Number(bill.totalAmount),
+    status: bill.status,
+    customer: bill.customer,
+    billItems: returnable,
+  });
+});
