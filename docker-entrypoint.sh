@@ -12,7 +12,7 @@
 set -e
 
 echo "==> Applying database migrations"
-if ! ./node_modules/.bin/prisma migrate deploy; then
+if ! node ./node_modules/prisma/build/index.js migrate deploy; then
   echo "!!! Migration failed. Refusing to start against an unknown schema." >&2
   exit 1
 fi
