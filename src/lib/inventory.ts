@@ -22,6 +22,13 @@ export type FifoAllocation = {
   quantity: Prisma.Decimal;
   buyingPrice: Prisma.Decimal;
   sellingPrice: Prisma.Decimal;
+  /**
+   * Supplier warranty attached to this cost layer. Terms are agreed per
+   * shipment, so a warranty can only be issued from a batch that came with
+   * cover — null means it did not.
+   */
+  warrantyMonths: number | null;
+  supplierId: string | null;
 };
 
 /**
@@ -85,9 +92,12 @@ export async function consumeFifo(
       remainingQty: Prisma.Decimal;
       buyingPrice: Prisma.Decimal;
       sellingPrice: Prisma.Decimal;
+      warrantyMonths: number | null;
+      supplierId: string | null;
     }[]
   >`
-    SELECT "id", "remainingQty", "buyingPrice", "sellingPrice"
+    SELECT "id", "remainingQty", "buyingPrice", "sellingPrice",
+           "warrantyMonths", "supplierId"
       FROM "PurchaseBatch"
      WHERE "itemId" = ${itemId}
        AND "remainingQty" > 0
@@ -113,6 +123,8 @@ export async function consumeFifo(
       quantity: take,
       buyingPrice: batch.buyingPrice,
       sellingPrice: batch.sellingPrice,
+      warrantyMonths: batch.warrantyMonths,
+      supplierId: batch.supplierId,
     });
 
     outstanding = outstanding.minus(take);
@@ -145,13 +157,16 @@ export async function consumeBatch(
       remainingQty: Prisma.Decimal;
       buyingPrice: Prisma.Decimal;
       sellingPrice: Prisma.Decimal;
+      warrantyMonths: number | null;
+      supplierId: string | null;
     }[]
   >`
     UPDATE "PurchaseBatch"
        SET "remainingQty" = "remainingQty" - ${quantity.toString()}::decimal
      WHERE "id" = ${batchId}
        AND "remainingQty" >= ${quantity.toString()}::decimal
-    RETURNING "id", "remainingQty", "buyingPrice", "sellingPrice"
+    RETURNING "id", "remainingQty", "buyingPrice", "sellingPrice",
+              "warrantyMonths", "supplierId"
   `;
 
   if (rows.length === 0) {
@@ -172,6 +187,8 @@ export async function consumeBatch(
     quantity,
     buyingPrice: rows[0].buyingPrice,
     sellingPrice: rows[0].sellingPrice,
+    warrantyMonths: rows[0].warrantyMonths,
+    supplierId: rows[0].supplierId,
   };
 }
 

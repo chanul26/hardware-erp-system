@@ -54,6 +54,13 @@ const optionalDate = z
 //  Items
 // ─────────────────────────────────────────────
 
+/** Warranty term in whole months, capped at ten years. */
+const warrantyMonths = z
+  .number()
+  .int("Warranty term must be a whole number of months.")
+  .positive("Warranty term must be at least one month.")
+  .max(120, "Warranty term cannot exceed 120 months.");
+
 export const itemCreateSchema = z.object({
   barcode: z.string().trim().min(1, "Barcode is required.").max(64),
   name: z.string().trim().min(1, "Item name is required.").max(200),
@@ -63,6 +70,9 @@ export const itemCreateSchema = z.object({
   reorderLevel: z.number().int().nonnegative().max(1_000_000).default(5),
   buyingPrice: money.default(0),
   sellingPrice: money.default(0),
+  warrantyEligible: z.boolean().default(false),
+  defaultWarrantyMonths: warrantyMonths.nullish(),
+  requiresSerial: z.boolean().default(true),
 });
 
 export const itemUpdateSchema = z.object({
@@ -73,6 +83,9 @@ export const itemUpdateSchema = z.object({
   unit: z.string().trim().min(1).max(20),
   reorderLevel: z.number().int().nonnegative().max(1_000_000),
   sellingPrice: money,
+  warrantyEligible: z.boolean().optional(),
+  defaultWarrantyMonths: warrantyMonths.nullish(),
+  requiresSerial: z.boolean().optional(),
 });
 
 export const mixingSchema = z.object({
@@ -96,6 +109,24 @@ const saleLineSchema = z.object({
   batchId: optionalId,
   quantity,
   price: money,
+  /**
+   * Serial numbers captured at the till, one per physical unit. Only used for
+   * warranty-eligible products sold from a batch that came with cover; extra
+   * entries are ignored and blanks are allowed for units without a serial.
+   */
+  serials: z.array(z.string().trim().max(100)).max(1000).optional(),
+  /**
+   * Warranty term the cashier is issuing to the customer, which may exceed what
+   * the supplier gave — the shop then covers the difference. 0 or null declines
+   * to issue. The server still refuses any warranty at all on a batch that came
+   * without supplier cover, so this can lengthen an offer but never invent one.
+   */
+  warrantyMonths: z
+    .number()
+    .int("Warranty term must be a whole number of months.")
+    .min(0, "Warranty term cannot be negative.")
+    .max(120, "Warranty term cannot exceed 120 months.")
+    .nullish(),
 });
 
 const returnLineSchema = z.object({
@@ -173,6 +204,13 @@ const restockLineSchema = z.object({
   quantity,
   unitCost: money,
   sellingPrice: money,
+  /**
+   * Supplier warranty agreed for this shipment. Terms are negotiated per
+   * delivery, not per product, so they belong to the batch. Absent means this
+   * stock came with no cover and none can be issued from it.
+   */
+  warrantyMonths: warrantyMonths.nullish(),
+  supplierWarrantyRef: optionalText(64),
 });
 
 export const restockSchema = z
@@ -183,6 +221,8 @@ export const restockSchema = z
     paymentMethod: z.enum(["CASH", "CHEQUE", "MIXED"]).default("CASH"),
     /** Cash portion. For CHEQUE this must be 0. */
     amountPaid: money.default(0),
+    /** How much of the cash portion physically left the shop drawer. */
+    drawerAmount: money.default(0),
     chequeAmount: money.default(0),
     chequeNumber: optionalText(64),
     bankName: optionalText(100),
@@ -233,10 +273,35 @@ export const settleCustomerSchema = z.object({
   amount: money.refine((v) => v > 0, "Amount must be greater than zero."),
 });
 
-export const settleSupplierSchema = z.object({
-  supplierId: id,
-  amount: money.refine((v) => v > 0, "Amount must be greater than zero."),
-});
+export const settleSupplierSchema = z
+  .object({
+    supplierId: id,
+    amount: money.refine((v) => v > 0, "Amount must be greater than zero."),
+    /** How the supplier was paid. Only CASH can draw on the shop till. */
+    method: z.enum(["CASH", "CARD", "CHEQUE", "BANK_TRANSFER"]).default("CASH"),
+    /**
+     * How much of the payment physically came out of the drawer. Paying "in
+     * cash" often means the owner's wallet or a bank transfer, and is routinely
+     * split — so this is an amount, not a flag.
+     */
+    drawerAmount: money.default(0),
+  })
+  .superRefine((val, ctx) => {
+    if (val.drawerAmount > val.amount) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["drawerAmount"],
+        message: "Cash taken from the drawer cannot exceed the payment.",
+      });
+    }
+    if (val.method !== "CASH" && val.drawerAmount > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["drawerAmount"],
+        message: "Only a cash payment can draw on the shop till.",
+      });
+    }
+  });
 
 export const chequePassSchema = z.object({
   chequeId: id,

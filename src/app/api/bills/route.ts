@@ -1,14 +1,10 @@
 import { Prisma, StockMovementType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import {
-  addMonths,
-  generateWarrantyNumber,
-  normaliseMonths,
-} from "@/lib/warranty";
 import { badRequest, conflict, forbidden, ok, parseBody, route } from "@/lib/api";
 import { requireStaff } from "@/lib/authz";
 import { billCreateSchema } from "@/lib/validation";
 import { syncBillPaymentState } from "@/lib/ledger";
+import { addMonths, generateWarrantyNumber } from "@/lib/warranty";
 import {
   adjustStock,
   consumeBatch,
@@ -32,22 +28,52 @@ import {
 
 type PreparedLine = {
   itemId: string;
+  itemName: string;
   batchId: string | null;
   quantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal;
   buyingPrice: Prisma.Decimal;
   totalPrice: Prisma.Decimal;
+
+  /**
+   * Warranty term to issue for this line, already gated on both conditions:
+   * the product is warranty-eligible AND the batch it came from carried
+   * supplier cover. Null means no warranty is issued.
+   */
+  warrantyMonths: number | null;
+  supplierId: string | null;
+
+  /**
+   * Serials for the cart line this row came from. FIFO can split one cart line
+   * across several rows, so the queue is *shared by reference* between them and
+   * consumed in order — otherwise each split would restart from the first
+   * serial and duplicate it.
+   */
+  serials: string[];
 };
 
 /** Resolves a sale line into one prepared line per cost layer it draws from. */
 async function prepareSaleLine(
   tx: Tx,
-  line: { id: string; batchId?: string; quantity: number; price: number },
+  line: {
+    id: string;
+    batchId?: string;
+    quantity: number;
+    price: number;
+    serials?: string[];
+    warrantyMonths?: number | null;
+  },
   userId: string
 ): Promise<{ lines: PreparedLine[]; movements: (billId: string) => Promise<void> }> {
   const item = await tx.item.findUnique({
     where: { id: line.id },
-    select: { id: true, name: true, isActive: true, sellingPrice: true },
+    select: {
+      id: true,
+      name: true,
+      isActive: true,
+      sellingPrice: true,
+      warrantyEligible: true,
+    },
   });
 
   if (!item) throw badRequest("One of the items in the cart no longer exists.");
@@ -72,6 +98,9 @@ async function prepareSaleLine(
     ? [await consumeBatch(tx, line.batchId, quantity, item.name)]
     : await consumeFifo(tx, line.id, quantity, item.name);
 
+  // One queue per cart line, shared across every FIFO split of it.
+  const serialQueue = [...(line.serials ?? [])];
+
   const lines: PreparedLine[] = allocations.map((allocation) => {
     // Margin protection, enforced server-side. This rule previously existed
     // only in the browser and was bypassable from the console.
@@ -84,11 +113,31 @@ async function prepareSaleLine(
 
     return {
       itemId: item.id,
+      itemName: item.name,
       batchId: allocation.batchId,
       quantity: allocation.quantity,
       unitPrice: proposedPrice,
       buyingPrice: allocation.buyingPrice,
       totalPrice: proposedPrice.mul(allocation.quantity),
+
+      // Both gates must open. An eligible product sold from a batch bought
+      // without cover carries no warranty, and neither does an ineligible
+      // product from a covered batch.
+      //
+      // Within that, the cashier may issue a longer term than the supplier
+      // gave — the shop then covers the difference — or decline entirely with
+      // 0. What they cannot do is conjure a warranty on uncovered stock, so
+      // the batch term still decides whether any warranty exists.
+      warrantyMonths:
+        item.warrantyEligible && allocation.warrantyMonths
+          ? line.warrantyMonths === undefined || line.warrantyMonths === null
+            ? allocation.warrantyMonths
+            : line.warrantyMonths > 0
+              ? line.warrantyMonths
+              : null
+          : null,
+      supplierId: allocation.supplierId,
+      serials: serialQueue,
     };
   });
 
@@ -125,80 +174,6 @@ async function prepareReturnLine(
     throw badRequest("Return line does not match the original invoice line.");
   }
 
-    // =========================
-    // SERIAL NUMBER VALIDATION
-    // =========================
-    //
-    // Serials are unique per product. Checking before the sale opens means a
-    // mistyped serial gets a plain-English message instead of aborting the
-    // whole checkout with a database error.
-
-    const requestedSerials: {
-      itemId: string;
-      serial: string;
-    }[] = [];
-
-    for (const item of items) {
-
-      if (item.isReturn || !Array.isArray(item.serials)) continue;
-
-      for (const raw of item.serials) {
-
-        const serial = String(raw || "").trim();
-
-        if (serial) {
-          requestedSerials.push({ itemId: item.id, serial });
-        }
-      }
-    }
-
-    if (requestedSerials.length > 0) {
-
-      // Same serial typed twice in this one cart.
-
-      const seen = new Set<string>();
-
-      for (const entry of requestedSerials) {
-
-        const key = `${entry.itemId}::${entry.serial.toLowerCase()}`;
-
-        if (seen.has(key)) {
-          return NextResponse.json(
-            {
-              error: `Serial number "${entry.serial}" is entered twice in this bill. Each unit needs its own serial.`,
-            },
-            { status: 400 }
-          );
-        }
-
-        seen.add(key);
-      }
-
-      // Serial already sold on an earlier bill.
-
-      const clash = await prisma.warranty.findFirst({
-        where: {
-          OR: requestedSerials.map((entry) => ({
-            itemId: entry.itemId,
-            serialNumber: entry.serial,
-          })),
-        },
-        include: {
-          bill: { select: { billNumber: true } },
-        },
-      });
-
-      if (clash) {
-        return NextResponse.json(
-          {
-            error: `Serial number "${clash.serialNumber}" is already recorded on invoice ${clash.bill.billNumber}. Check the serial and try again.`,
-          },
-          { status: 409 }
-        );
-      }
-    }
-
-    const billNumber = `INV-${Date.now().toString().slice(-6)}`;
   // Return quantities arrive negative; work with the magnitude.
   const returning = dec(line.quantity).abs();
   const alreadyReturned = original.returnedQty;
@@ -220,289 +195,6 @@ async function prepareReturnLine(
     await restoreBatch(tx, original.batchId, returning);
   }
 
-      // =========================
-      // WARRANTY ISSUANCE
-      // =========================
-      //
-      // A warranty is only issued when BOTH gates pass: the product is
-      // flagged warranty-eligible, and the batch it was sold from actually
-      // came with supplier cover. The customer's clock starts now.
-
-      const checkoutTime = Date.now();
-      let warrantySequence = 0;
-
-      // Returned to the client so the receipt can print warranty numbers.
-      const issuedWarranties: {
-        warrantyNumber: string;
-        itemName: string;
-        serialNumber: string | null;
-        months: number;
-        endDate: Date;
-      }[] = [];
-
-      // FIFO can split one cart line across several bill items, so serials
-      // are consumed from a single queue per cart line rather than per row.
-
-      const issueWarranties = async (opts: {
-        billItemId: string;
-        itemId: string;
-        batchId: string | null;
-        quantity: number;
-        months: number | null;
-        serials: string[];
-        itemName: string;
-      }) => {
-
-        if (!opts.months || opts.quantity <= 0) return;
-
-        const batch = opts.batchId
-          ? await tx.purchaseBatch.findUnique({
-              where: { id: opts.batchId },
-            })
-          : null;
-
-        // No batch on record means legacy stock with no supplier warranty.
-        if (!batch?.warrantyMonths) return;
-
-        const startDate = new Date();
-        const endDate = addMonths(startDate, opts.months);
-
-        // One row per physical unit.
-        const unitCount = Math.max(
-          1,
-          Math.round(opts.quantity)
-        );
-
-        for (let unit = 0; unit < unitCount; unit++) {
-
-          warrantySequence += 1;
-
-          const serial = opts.serials.shift()?.trim() || null;
-
-          const warrantyNumber = generateWarrantyNumber(
-            warrantySequence,
-            checkoutTime
-          );
-
-          await tx.warranty.create({
-            data: {
-              warrantyNumber,
-
-              billItemId: opts.billItemId,
-              billId: bill.id,
-              itemId: opts.itemId,
-              customerId: customerId || null,
-
-              batchId: batch.id,
-              supplierId: batch.supplierId,
-
-              serialNumber: serial,
-
-              months: opts.months,
-              startDate,
-              endDate,
-            },
-          });
-
-          issuedWarranties.push({
-            warrantyNumber,
-            itemName: opts.itemName,
-            serialNumber: serial,
-            months: opts.months,
-            endDate,
-          });
-        }
-      };
-
-      // =========================
-      // PROCESS ITEMS
-      // =========================
-
-      for (const item of items) {
-
-        // ====================================================
-        // RETURN ITEM
-        // ====================================================
-
-        if (item.isReturn) {
-
-          const absQty = Math.abs(item.quantity);
-
-          const originalItem = await tx.billItem.findUnique({
-            where: {
-              id: item.originalBillItemId,
-            },
-          });
-
-          if (!originalItem) {
-            throw new Error("Original bill item missing");
-          }
-
-          if (
-            Number(originalItem.returnedQty || 0) + absQty >
-            Number(originalItem.quantity)
-          ) {
-            throw new Error(
-              `Cannot return more than purchased for ${item.name}`
-            );
-          }
-
-          // UPDATE RETURNED QTY
-
-          await tx.billItem.update({
-            where: {
-              id: item.originalBillItemId,
-            },
-            data: {
-              returnedQty: {
-                increment: absQty,
-              },
-            },
-          });
-
-          // VOID WARRANTIES ON THE RETURNED UNITS
-          //
-          // Returned goods must not keep live cover. One warranty row per
-          // unit, so void as many as came back — already-claimed ones are
-          // left alone since that history still matters.
-
-          const warrantiesToVoid = await tx.warranty.findMany({
-            where: {
-              billItemId: item.originalBillItemId,
-              status: { in: ["ACTIVE", "EXPIRED"] },
-            },
-            orderBy: { createdAt: "asc" },
-            take: Math.max(1, Math.round(absQty)),
-          });
-
-          if (warrantiesToVoid.length > 0) {
-            await tx.warranty.updateMany({
-              where: {
-                id: {
-                  in: warrantiesToVoid.map((w) => w.id),
-                },
-              },
-              data: {
-                status: "VOID",
-                notes: `Voided — item returned on invoice ${billNumber}`,
-              },
-            });
-          }
-
-          // RESTORE ORIGINAL BATCH STOCK
-
-          if (originalItem.batchId) {
-            await tx.purchaseBatch.update({
-              where: {
-                id: originalItem.batchId,
-              },
-              data: {
-                remainingQty: {
-                  increment: absQty,
-                },
-              },
-            });
-          }
-
-          // UPDATE MASTER STOCK
-
-          await tx.item.update({
-            where: {
-              id: item.id,
-            },
-            data: {
-              stockQty: {
-                increment: absQty,
-              },
-            },
-          });
-
-          // STOCK MOVEMENT
-
-          await tx.stockMovement.create({
-            data: {
-              itemId: item.id,
-              quantity: absQty,
-              type: "RETURN",
-              note: `Returned from invoice ${item.originalBillId}`,
-            },
-          });
-
-          // SAVE NEGATIVE BILL ITEM
-
-          await tx.billItem.create({
-            data: {
-              billId: bill.id,
-              itemId: item.id,
-
-              quantity: item.quantity,
-
-              unitPrice: Number(item.price),
-
-              buyingPrice: Number(originalItem.buyingPrice || 0),
-
-              batchId: originalItem.batchId,
-
-              totalPrice: Number(item.price) * item.quantity,
-            },
-          });
-
-        }
-
-        // ====================================================
-        // NORMAL SALE
-        // ====================================================
-
-        else {
-
-          const currentItem = await tx.item.findUnique({
-            where: {
-              id: item.id,
-            },
-          });
-
-          if (!currentItem) {
-            throw new Error(`Item missing: ${item.name}`);
-          }
-
-          if (currentItem.stockQty < item.quantity) {
-            throw new Error(
-              `Insufficient stock for item: ${item.name}`
-            );
-          }
-
-          let totalSoldQty = 0;
-
-          // WARRANTY REQUEST FOR THIS CART LINE
-          //
-          // The cashier may adjust the term at the till, but the product must
-          // be flagged eligible before anything is issued at all.
-
-          const warrantyMonths = currentItem.warrantyEligible
-            ? normaliseMonths(item.warrantyMonths)
-            : null;
-
-          const serialQueue: string[] = Array.isArray(item.serials)
-            ? [...item.serials]
-            : [];
-
-          // ======================================================
-          // CASE 1: USER SELECTED SPECIFIC BATCH
-          // ======================================================
-
-          if (item.batchId) {
-
-            const selectedBatch = await tx.purchaseBatch.findUnique({
-              where: {
-                id: item.batchId,
-              },
-            });
-
-            if (!selectedBatch) {
-              throw new Error(
-                `Selected batch not found for ${item.name}`
-              );
-            }
   // Refund at the price actually charged, never at a client-supplied price.
   const unitPrice = original.unitPrice;
 
@@ -520,19 +212,20 @@ async function prepareReturnLine(
     });
   };
 
-            const createdBillItem = await tx.billItem.create({
-              data: {
-                billId: bill.id,
-                itemId: item.id,
   return {
     lines: [
       {
         itemId: original.itemId,
+        itemName: original.item.name,
         batchId: original.batchId,
         quantity: returning.negated(),
         unitPrice,
         buyingPrice: original.buyingPrice,
         totalPrice: unitPrice.mul(returning.negated()),
+        // Returns never issue a warranty.
+        warrantyMonths: null,
+        supplierId: null,
+        serials: [],
       },
     ],
     movements,
@@ -551,6 +244,50 @@ export const POST = route("POST /api/bills", async (req) => {
     throw forbidden("Only a manager or admin can process a return.");
   }
 
+  // Serials are unique per product. Checking before the transaction opens means
+  // a mistyped serial gets a plain-English message instead of surfacing as a
+  // unique-constraint violation halfway through a sale.
+  const requestedSerials: { itemId: string; serial: string }[] = [];
+
+  for (const line of body.items) {
+    if (line.isReturn === true) continue;
+    for (const raw of line.serials ?? []) {
+      const serial = raw.trim();
+      if (serial) requestedSerials.push({ itemId: line.id, serial });
+    }
+  }
+
+  if (requestedSerials.length > 0) {
+    // Same serial typed twice in this one cart.
+    const seen = new Set<string>();
+    for (const entry of requestedSerials) {
+      const key = `${entry.itemId}::${entry.serial.toLowerCase()}`;
+      if (seen.has(key)) {
+        throw badRequest(
+          `Serial number "${entry.serial}" is entered twice on this bill. Each unit needs its own serial.`
+        );
+      }
+      seen.add(key);
+    }
+
+    // Serial already sold on an earlier bill.
+    const clash = await prisma.warranty.findFirst({
+      where: {
+        OR: requestedSerials.map((entry) => ({
+          itemId: entry.itemId,
+          serialNumber: entry.serial,
+        })),
+      },
+      select: { serialNumber: true, bill: { select: { billNumber: true } } },
+    });
+
+    if (clash) {
+      throw conflict(
+        `Serial number "${clash.serialNumber}" is already recorded on invoice ${clash.bill.billNumber}. Check the serial and try again.`
+      );
+    }
+  }
+
   const bill = await prisma.$transaction(
     async (tx) => {
       const billNumber = await nextDocumentNumber(tx, "BILL", "INV");
@@ -558,17 +295,6 @@ export const POST = route("POST /api/bills", async (req) => {
       const prepared: PreparedLine[] = [];
       const pendingMovements: Array<(billId: string) => Promise<void>> = [];
 
-            await issueWarranties({
-              billItemId: createdBillItem.id,
-              itemId: item.id,
-              batchId: selectedBatch.id,
-              quantity: item.quantity,
-              months: warrantyMonths,
-              serials: serialQueue,
-              itemName: currentItem.name,
-            });
-
-            // REDUCE SELECTED BATCH ONLY
       for (const line of body.items) {
         const result =
           line.isReturn === true
@@ -596,150 +322,6 @@ export const POST = route("POST /api/bills", async (req) => {
       const amountPaid =
         body.amountPaid === undefined ? totalAmount : dec(body.amountPaid);
 
-          // ======================================================
-          // CASE 2: FIFO LEGACY SALE
-          // ======================================================
-
-          else {
-
-            const fifoBatches = await tx.purchaseBatch.findMany({
-              where: {
-                itemId: item.id,
-                remainingQty: {
-                  gt: 0,
-                },
-              },
-              orderBy: {
-                createdAt: "asc",
-              },
-            });
-
-            let remainingQty = item.quantity;
-
-            for (const batch of fifoBatches) {
-
-              if (remainingQty <= 0) break;
-
-              const qtyToTake = Math.min(
-                remainingQty,
-                batch.remainingQty
-              );
-
-              // CREATE BILL ITEM
-
-              const createdBillItem = await tx.billItem.create({
-                data: {
-                  billId: bill.id,
-                  itemId: item.id,
-
-                  batchId: batch.id,
-
-                  quantity: qtyToTake,
-
-                  unitPrice: Number(
-                    item.price || batch.sellingPrice
-                  ),
-
-                  buyingPrice: Number(
-                    batch.buyingPrice || 0
-                  ),
-
-                  totalPrice:
-                    Number(item.price || batch.sellingPrice) *
-                    qtyToTake,
-                },
-              });
-
-              await issueWarranties({
-                billItemId: createdBillItem.id,
-                itemId: item.id,
-                batchId: batch.id,
-                quantity: qtyToTake,
-                months: warrantyMonths,
-                serials: serialQueue,
-                itemName: currentItem.name,
-              });
-
-              // REDUCE BATCH
-
-              await tx.purchaseBatch.update({
-                where: {
-                  id: batch.id,
-                },
-                data: {
-                  remainingQty: {
-                    decrement: qtyToTake,
-                  },
-                },
-              });
-
-              // STOCK MOVEMENT
-
-              await tx.stockMovement.create({
-                data: {
-                  itemId: item.id,
-                  quantity: -qtyToTake,
-                  type: "SALE",
-                  note: `Sold FIFO stock via invoice ${billNumber}`,
-                },
-              });
-
-              remainingQty -= qtyToTake;
-              totalSoldQty += qtyToTake;
-            }
-
-            // LEGACY STOCK
-
-            if (remainingQty > 0) {
-
-              await tx.billItem.create({
-                data: {
-                  billId: bill.id,
-                  itemId: item.id,
-
-                  quantity: remainingQty,
-
-                  unitPrice: Number(
-                    item.price || currentItem.sellingPrice
-                  ),
-
-                  buyingPrice: Number(
-                    currentItem.buyingPrice || 0
-                  ),
-
-                  totalPrice:
-                    Number(
-                      item.price || currentItem.sellingPrice
-                    ) * remainingQty,
-                },
-              });
-
-              await tx.stockMovement.create({
-                data: {
-                  itemId: item.id,
-                  quantity: -remainingQty,
-                  type: "SALE",
-                  note: `Sold legacy stock via invoice ${billNumber}`,
-                },
-              });
-
-              totalSoldQty += remainingQty;
-            }
-          }
-
-          // UPDATE MASTER STOCK
-
-          await tx.item.update({
-            where: {
-              id: item.id,
-            },
-            data: {
-              stockQty: {
-                decrement: totalSoldQty,
-              },
-            },
-          });
-        }
       if (amountPaid.gt(totalAmount) && totalAmount.gte(0)) {
         // Overpayment is change given at the till, not a larger payment record.
         throw badRequest(
@@ -771,31 +353,85 @@ export const POST = route("POST /api/bills", async (req) => {
           discount,
           tax,
           totalAmount,
-          billItems: {
-            create: prepared.map((line) => ({
-              itemId: line.itemId,
-              batchId: line.batchId,
-              quantity: line.quantity,
-              unitPrice: line.unitPrice,
-              buyingPrice: line.buyingPrice,
-              totalPrice: line.totalPrice,
-            })),
-          },
         },
         select: { id: true, billNumber: true, totalAmount: true },
       });
 
-      return { bill, issuedWarranties };
-    });
+      // Lines are created one at a time rather than nested, because each
+      // warranty has to cite the bill item it covers and a nested create does
+      // not hand back the generated ids.
+      const checkoutTime = Date.now();
+      const startDate = new Date();
+      let warrantySequence = 0;
 
-    return NextResponse.json(
-      {
-        success: true,
-        bill: result.bill,
-        warranties: result.issuedWarranties,
-      },
-      {
-        status: 201,
+      const issuedWarranties: {
+        warrantyNumber: string;
+        itemName: string;
+        serialNumber: string | null;
+        months: number;
+        endDate: Date;
+      }[] = [];
+
+      for (const line of prepared) {
+        const billItem = await tx.billItem.create({
+          data: {
+            billId: created.id,
+            itemId: line.itemId,
+            batchId: line.batchId,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            buyingPrice: line.buyingPrice,
+            totalPrice: line.totalPrice,
+          },
+          select: { id: true },
+        });
+
+        if (!line.warrantyMonths || line.quantity.lte(0)) continue;
+
+        const endDate = addMonths(startDate, line.warrantyMonths);
+
+        // One warranty row per physical unit. Warranty-bearing goods are sold
+        // whole, so a fractional quantity here rounds rather than issuing a
+        // fraction of a warranty.
+        const unitCount = Math.max(1, Math.round(Number(line.quantity)));
+
+        for (let unit = 0; unit < unitCount; unit++) {
+          warrantySequence += 1;
+
+          // Shared queue across FIFO splits of the same cart line.
+          const serial = line.serials.shift()?.trim() || null;
+
+          const warrantyNumber = generateWarrantyNumber(
+            warrantySequence,
+            checkoutTime
+          );
+
+          await tx.warranty.create({
+            data: {
+              warrantyNumber,
+              billItemId: billItem.id,
+              billId: created.id,
+              itemId: line.itemId,
+              customerId: body.customerId ?? null,
+              batchId: line.batchId,
+              supplierId: line.supplierId,
+              serialNumber: serial,
+              months: line.warrantyMonths,
+              startDate,
+              endDate,
+            },
+          });
+
+          issuedWarranties.push({
+            warrantyNumber,
+            itemName: line.itemName,
+            serialNumber: serial,
+            months: line.warrantyMonths,
+            endDate,
+          });
+        }
+      }
+
       // Movements are written after the bill exists so each can cite it.
       for (const apply of pendingMovements) await apply(created.id);
 
@@ -810,31 +446,6 @@ export const POST = route("POST /api/bills", async (req) => {
         });
       }
 
-    console.error("[POST /api/bills]", error);
-
-    // Two tills can pass the pre-check and still collide on the same serial.
-
-    if (error?.code === "P2002") {
-
-      return NextResponse.json(
-        {
-          error:
-            "That serial number was just recorded on another bill. Check the serial and try again.",
-        },
-        { status: 409 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: error.message || "Internal Server Error",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
-}
       // status / amountPaid are derived, never trusted from the request.
       const state = await syncBillPaymentState(tx, created.id);
 
@@ -847,6 +458,8 @@ export const POST = route("POST /api/bills", async (req) => {
         totalAmount,
         amountPaid: state.amountPaid,
         status: state.status,
+        // Returned so the receipt can print warranty numbers.
+        warranties: issuedWarranties,
       };
     },
     // FIFO batch locking can queue behind a concurrent sale of the same item.

@@ -10,15 +10,12 @@ services:
     container_name: hardware_erp_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: erp_user
-      POSTGRES_PASSWORD: erp_password
-      POSTGRES_DB: hardware_erp
-      # Timestamps are stored in UTC either way; this keeps anything read
-      # directly from psql in the same day as the application shows.
-      TZ: Asia/Colombo
       POSTGRES_USER: ${POSTGRES_USER:-erp_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_password}
       POSTGRES_DB: ${POSTGRES_DB:-hardware_erp}
+      # Timestamps are stored in UTC either way; this keeps anything read
+      # directly from psql in the same day as the application shows.
+      TZ: Asia/Colombo
     ports:
       # Bound to loopback only: reachable from this machine's tooling, not from
       # the network. Publishing 0.0.0.0:5433 would expose the database to
@@ -51,6 +48,9 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required — set it in .env}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
       NODE_ENV: production
+      # Daily totals are cut at Colombo midnight, so the container must not run
+      # on UTC — see the Dockerfile for why.
+      TZ: Asia/Colombo
     depends_on:
       db:
         condition: service_healthy

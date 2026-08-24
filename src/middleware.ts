@@ -23,6 +23,9 @@ const PAGE_ACCESS: Array<{ prefix: string; roles: Role[] }> = [
   { prefix: "/suppliers", roles: ["ADMIN", "MANAGER"] },
   { prefix: "/payments", roles: ["ADMIN", "MANAGER"] },
   { prefix: "/mixing-history", roles: ["ADMIN", "MANAGER"] },
+  { prefix: "/warranty", roles: ["ADMIN", "MANAGER"] },
+  // Cash position, bank balances and expenses are owner-level information.
+  { prefix: "/money", roles: ["ADMIN"] },
   { prefix: "/billing", roles: ["ADMIN", "MANAGER", "CASHIER"] },
   { prefix: "/customers", roles: ["ADMIN", "MANAGER", "CASHIER"] },
 ];
@@ -89,17 +92,6 @@ export default withAuth(
 
 export const config = {
   matcher: [
-    "/dashboard/:path*", 
-    "/users/:path*", 
-    "/reports/:path*", 
-    "/inventory/:path*", 
-    "/purchase-orders/:path*", 
-    "/suppliers/:path*", 
-    "/payments/:path*", 
-    "/customers/:path*",
-    "/billing/:path*",
-    "/warranty/:path*",
-    "/"
     /**
      * Everything except Next internals, static assets, the NextAuth endpoints
      * and the health probe. Written as an exclusion so a new page or API route

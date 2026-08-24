@@ -1,6 +1,5 @@
 import { BillStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { normaliseNic, normalisePhone } from "@/lib/lk";
 import { notFound, ok, parseBody, parseQuery, route } from "@/lib/api";
 import { requireManager, requireStaff } from "@/lib/authz";
 import {
@@ -9,6 +8,7 @@ import {
   customerUpdateSchema,
   idQuerySchema,
 } from "@/lib/validation";
+import { normaliseNic, normalisePhone } from "@/lib/lk";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +23,12 @@ export const GET = route("GET /api/customers", async (req) => {
   await requireStaff();
   const { search, page, limit } = parseQuery(req, customerListQuerySchema);
 
+  // A phone typed as "077 123 4567" has to find the number stored as
+  // "0771234567", so the search term goes through the same canonicalisation the
+  // record did. The raw term is kept as well, for names and partial numbers.
+  const phoneTerm = normalisePhone(search);
+  const nicTerm = normaliseNic(search);
+
   const where: Prisma.CustomerWhereInput = {
     isActive: true,
     ...(search
@@ -31,6 +37,12 @@ export const GET = route("GET /api/customers", async (req) => {
             { name: { contains: search, mode: "insensitive" as const } },
             { phone: { contains: search, mode: "insensitive" as const } },
             { nic: { contains: search, mode: "insensitive" as const } },
+            ...(phoneTerm && phoneTerm !== search
+              ? [{ phone: { contains: phoneTerm } }]
+              : []),
+            ...(nicTerm && nicTerm !== search
+              ? [{ nic: { contains: nicTerm, mode: "insensitive" as const } }]
+              : []),
           ],
         }
       : {}),
@@ -104,8 +116,10 @@ export const POST = route("POST /api/customers", async (req) => {
   const customer = await prisma.customer.create({
     data: {
       name: body.name,
-      phone: body.phone,
-      nic: body.nic ?? null,
+      // Stored in one canonical shape so the counter can find the customer
+      // however the number happens to be typed next time.
+      phone: normalisePhone(body.phone) ?? body.phone,
+      nic: normaliseNic(body.nic),
       email: body.email ?? null,
       address: body.address ?? null,
     },
@@ -114,29 +128,6 @@ export const POST = route("POST /api/customers", async (req) => {
   return ok(customer, 201);
 });
 
-  let where = {};
-  if (search !== "") {
-    // A phone typed as "077 123 4567" has to find the number stored as
-    // "0771234567", so the search term goes through the same canonicalisation
-    // the record did. The raw term is kept as an alternative for names and
-    // partial numbers.
-    const phoneTerm = normalisePhone(search);
-    const nicTerm = normaliseNic(search);
-
-    where = {
-      OR: [
-        { name: { contains: search, mode: "insensitive" } },
-        { phone: { contains: search } },
-        ...(phoneTerm && phoneTerm !== search
-          ? [{ phone: { contains: phoneTerm } }]
-          : []),
-        { nic: { contains: search, mode: "insensitive" } },
-        ...(nicTerm && nicTerm !== search
-          ? [{ nic: { contains: nicTerm, mode: "insensitive" } }]
-          : []),
-      ],
-    };
-  }
 /** PUT /api/customers — edit customer details. */
 export const PUT = route("PUT /api/customers", async (req) => {
   await requireStaff();
@@ -153,48 +144,13 @@ export const PUT = route("PUT /api/customers", async (req) => {
     where: { id: body.id },
     data: {
       name: body.name,
-      phone: body.phone,
-      nic: body.nic ?? null,
+      phone: normalisePhone(body.phone) ?? body.phone,
+      nic: normaliseNic(body.nic),
       email: body.email ?? null,
       address: body.address ?? null,
     },
   });
 
-  return NextResponse.json({ customers: customersWithDebt, total });
-}
-
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const { name, nic, email, phone } = body;
-
-    if (!name || !phone) {
-      return NextResponse.json(
-        { error: "Name and Phone required" },
-        { status: 400 }
-      );
-    }
-
-    // Stored in one canonical shape so the counter can find the customer
-    // however the number happens to be typed next time.
-    const customer = await prisma.customer.create({
-      data: {
-        name,
-        nic: normaliseNic(nic),
-        email: email || null,
-        phone: normalisePhone(phone) || phone,
-      },
-    });
-
-    return NextResponse.json(customer);
-  } catch (error: any) {
-    // Better error handling for unique constraints
-    if (error.code === 'P2002') {
-      return NextResponse.json({ error: "A customer with this NIC or Email already exists" }, { status: 400 });
-    }
-    return NextResponse.json({ error: "Failed to create customer" }, { status: 500 });
-  }
-}
   return ok(customer);
 });
 
@@ -217,15 +173,6 @@ export const DELETE = route("DELETE /api/customers", async (req) => {
 
   if (!customer) throw notFound("Customer not found.");
 
-    const updated = await prisma.customer.update({
-      where: { id },
-      data: {
-        name,
-        nic: normaliseNic(nic),
-        email: email || null,
-        phone: normalisePhone(phone) || phone,
-      },
-    });
   const [bills, payments] = await Promise.all([
     prisma.bill.count({ where: { customerId: id } }),
     prisma.payment.count({ where: { customerId: id } }),

@@ -24,7 +24,12 @@ RUN npm run build
 
 # ── Stage 3: runtime ───────────────────────────────────────────────────
 FROM node:24-alpine AS runner
-RUN apk add --no-cache libc6-compat
+# The shop's day is a Colombo day, and every daily total — takings, banking,
+# the drawer count, the report date filters — is cut at local midnight. The
+# node images default to UTC, which would start the shop day at 5.30am and run
+# it into the next morning. tzdata is needed for the zone to resolve at all.
+RUN apk add --no-cache libc6-compat tzdata
+ENV TZ=Asia/Colombo
 WORKDIR /app
 
 ENV NODE_ENV=production

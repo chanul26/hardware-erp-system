@@ -137,17 +137,13 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts Account[]
-  sessions Session[]
-  bills    Bill[]
-
+  accounts          Account[]
+  sessions          Session[]
+  bills             Bill[]
+  stockMovements    StockMovement[]
   warrantyClaims    WarrantyClaim[]
   moneyTransactions MoneyTransaction[]
   cashCounts        CashCount[]
-  accounts       Account[]
-  sessions       Session[]
-  bills          Bill[]
-  stockMovements StockMovement[]
 
   @@index([role])
 }
@@ -169,9 +165,6 @@ model Customer {
   payments   Payment[]
   cheques    Cheque[]
   warranties Warranty[]
-  bills    Bill[]
-  payments Payment[]
-  cheques  Cheque[]
 
   @@index([name])
   @@index([isActive])
@@ -197,32 +190,33 @@ model Supplier {
 }
 
 model Item {
-  id           String   @id @default(uuid())
-  barcode      String   @unique
+  id           String  @id @default(uuid())
+  barcode      String  @unique
   name         String
   description  String?
   category     String?
-  unit         String   @default("pcs")
+  unit         String  @default("pcs")
   /// Master stock level. Invariant: equals the sum of remainingQty across this
   /// item's purchase batches. Enforced by a CHECK constraint (>= 0) and by
   /// always mutating both in the same transaction.
-  stockQty     Decimal  @default(0) @db.Decimal(12, 3)
-  reorderLevel Int      @default(5)
-  buyingPrice  Decimal  @db.Decimal(12, 2)
-  sellingPrice Decimal  @db.Decimal(12, 2)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  stockQty     Decimal @default(0) @db.Decimal(12, 3)
+  reorderLevel Int     @default(5)
+  buyingPrice  Decimal @db.Decimal(12, 2)
+  sellingPrice Decimal @db.Decimal(12, 2)
+  isActive     Boolean @default(true)
 
-  // ── WARRANTY ──
-  // Gate 1: is this product the kind of thing that can carry a warranty at all?
-  // A drill is; a bag of cement is not. Nothing else in the warranty flow
-  // switches on unless this is true.
+  // ── Warranty configuration ──
+  // Gate 1: can this product carry a warranty at all? A drill can; a bag of
+  // cement cannot. Nothing else in the warranty flow switches on unless this
+  // is true.
   warrantyEligible      Boolean @default(false)
-  // Typical term the supplier gives for this product, used to prefill restock.
+  /// Typical term the supplier gives for this product, used to prefill restock.
   defaultWarrantyMonths Int?
-  // Whether a serial must be captured per unit at the till.
+  /// Whether a serial number must be captured per unit at the till.
   requiresSerial        Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   billItems       BillItem[]
   purchaseItems   PurchaseItem[]
@@ -253,46 +247,12 @@ model Bill {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  customer   Customer?  @relation(fields: [customerId], references: [id])
-  user       User       @relation(fields: [userId], references: [id])
+  customer   Customer?  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
   billItems  BillItem[]
   payments   Payment[]
   cheques    Cheque[]
   warranties Warranty[]
-}
-
-model BillItem {
-  id String @id @default(uuid())
-
-  billId String
-  itemId String
-
-  quantity    Float
-  returnedQty Float @default(0)
-
-  unitPrice Decimal @db.Decimal(12, 2)
-
-  // NEW
-  buyingPrice Decimal @default(0) @db.Decimal(12, 2)
-
-  // NEW
-  batchId String?
-
-  discount Decimal @default(0) @db.Decimal(12, 2)
-
-  totalPrice Decimal @db.Decimal(12, 2)
-
-  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
-
-  item Item @relation(fields: [itemId], references: [id])
-
-  warranties Warranty[]
-}
-  customer  Customer?  @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  user      User       @relation(fields: [userId], references: [id], onDelete: Restrict)
-  billItems BillItem[]
-  payments  Payment[]
-  cheques   Cheque[]
 
   @@index([customerId])
   @@index([userId])
@@ -314,9 +274,10 @@ model BillItem {
   discount    Decimal @default(0) @db.Decimal(12, 2)
   totalPrice  Decimal @db.Decimal(12, 2)
 
-  bill  Bill           @relation(fields: [billId], references: [id], onDelete: Cascade)
-  item  Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  batch PurchaseBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  bill       Bill           @relation(fields: [billId], references: [id], onDelete: Cascade)
+  item       Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  batch      PurchaseBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warranties Warranty[]
 
   @@index([billId])
   @@index([itemId])
@@ -410,118 +371,125 @@ model PurchaseItem {
 }
 
 model SupplierPayment {
-  id String @id @default(uuid())
-
+  id              String        @id @default(uuid())
   purchaseOrderId String
   supplierId      String
+  amount          Decimal       @db.Decimal(12, 2)
+  method          PaymentMethod @default(CASH)
 
-  amount Decimal @db.Decimal(12, 2)
-
-  method PaymentMethod @default(CASH)
-
-  // How much of this payment physically came out of the shop drawer.
-  //
-  // Paying a supplier in cash does not mean the money came from the till — it
-  // usually comes from the owner's wallet or a bank transfer. It is also
-  // routinely split: part scraped out of the drawer, the rest made up from
-  // his own pocket. A yes/no flag cannot express that, so the drawer's share
-  // is recorded as an amount, and only this much is taken off cash in hand.
-  //
-  // 0 means none of it came from the till, which is the common case.
+  /// How much of this payment physically came out of the shop drawer.
+  ///
+  /// Paying a supplier "in cash" does not mean the money came from the till —
+  /// it often comes from the owner's wallet or a bank transfer, and is
+  /// routinely split between the two. A yes/no flag cannot express that, so
+  /// the drawer's share is recorded as an amount and only this much is taken
+  /// off cash in hand. 0 means none of it came from the till.
   drawerAmount Decimal @default(0) @db.Decimal(14, 2)
 
-  reference String?
+  reference  String?
+  /// Set when this payment reverses another (a bounced cheque).
+  reversesId String?
+  paidAt     DateTime @default(now())
+  createdAt  DateTime @default(now())
 
-  paidAt DateTime @default(now())
-
-  createdAt DateTime @default(now())
-
-  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-
-  supplier Supplier @relation(fields: [supplierId], references: [id])
-
+  purchaseOrder  PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  supplier       Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   supplierCheque SupplierCheque?
+
+  @@index([purchaseOrderId])
+  @@index([supplierId])
+  @@index([paidAt])
 }
 
 model SupplierCheque {
-  id String @id @default(uuid())
-
-  supplierPaymentId String @unique
-
-  chequeNumber String
-
-  bank String
-
-  amount Decimal @db.Decimal(12, 2)
-
-  chequeDate DateTime
-
-  // NEW FIELD
-  passedDate DateTime?
-
-  status ChequeStatus @default(PENDING)
-
-  createdAt DateTime @default(now())
+  id                String       @id @default(uuid())
+  supplierPaymentId String       @unique
+  chequeNumber      String
+  bank              String
+  amount            Decimal      @db.Decimal(12, 2)
+  chequeDate        DateTime
+  passedDate        DateTime?
+  status            ChequeStatus @default(PENDING)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   supplierPayment SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([chequeDate])
+  @@index([chequeNumber])
 }
 
 model StockMovement {
-  id String @id @default(uuid())
+  id        String            @id @default(uuid())
+  itemId    String
+  type      StockMovementType
+  /// Signed: negative for stock leaving, positive for stock arriving.
+  quantity  Decimal           @db.Decimal(12, 3)
+  /// Stock level immediately after this movement, for point-in-time audit.
+  balance   Decimal           @db.Decimal(12, 3)
+  purpose   String?
+  note      String?
+  /// Who caused the movement, and which document it belongs to.
+  userId    String?
+  billId    String?
+  createdAt DateTime          @default(now())
 
-  itemId String
-  item   Item   @relation(fields: [itemId], references: [id])
+  item Item  @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  type     String
-  quantity Float
-
-  note String?
-
-  // NEW
-  purpose String?
-
-  createdAt DateTime @default(now())
+  @@index([itemId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([purpose])
 }
 
 model PurchaseBatch {
-  id String @id @default(uuid())
+  id              String  @id @default(uuid())
+  itemId          String
+  /// Traceability: which delivery and supplier this cost layer came from.
+  purchaseOrderId String?
+  supplierId      String?
+  quantity        Decimal @db.Decimal(12, 3)
+  remainingQty    Decimal @db.Decimal(12, 3)
+  buyingPrice     Decimal @db.Decimal(12, 2)
+  sellingPrice    Decimal @db.Decimal(12, 2)
 
-  itemId String
-  item   Item   @relation(fields: [itemId], references: [id])
-
-  quantity     Float
-  remainingQty Float
-
-  buyingPrice  Decimal @db.Decimal(12, 2)
-  sellingPrice Decimal @db.Decimal(12, 2)
-
-  createdAt DateTime @default(now())
-
-  // ── WARRANTY (Gate 2) ──
+  // ── Warranty (gate 2) ──
   // Warranty terms are agreed per shipment, not per product, so they live on
-  // the batch. null warrantyMonths means this stock came with no supplier
-  // warranty and therefore none can be issued to a customer from it.
+  // the batch. A null warrantyMonths means this stock came with no supplier
+  // warranty, and therefore none can be issued to a customer from it.
   warrantyMonths      Int?
   supplierWarrantyRef String?
 
-  // Who the shop claims against when a customer brings a fault back.
-  supplierId      String?
-  supplier        Supplier? @relation(fields: [supplierId], references: [id])
-  purchaseOrderId String?
+  createdAt DateTime @default(now())
 
-  warranties Warranty[]
+  item          Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  billItems     BillItem[]
+  warranties    Warranty[]
 
   @@index([itemId])
+  @@index([purchaseOrderId])
+  @@index([supplierId])
+  // Drives the FIFO lookup: oldest batch with stock remaining, per item.
+  @@index([itemId, remainingQty, createdAt])
+}
+
+/// Source of sequential document numbers. Incremented inside the same
+/// transaction as the document it numbers, so numbers are gapless under
+/// concurrency and cannot collide.
+model DocumentCounter {
+  id    String @id
+  value Int    @default(0)
 }
 
 // ─────────────────────────────────────────────
 //  Warranty
+//  Merged from the update/warranty branch.
 // ─────────────────────────────────────────────
-//
-// The shop is a pass-through, not the guarantor: a warranty can only be
-// issued to a customer if the supplier gave one for that specific batch.
-// The customer's clock starts on the day they buy, regardless of how long
-// the unit sat on the shelf.
 
 enum WarrantyStatus {
   ACTIVE
@@ -626,17 +594,18 @@ model WarrantyClaim {
 }
 
 // ─────────────────────────────────────────────
-//  Money Management
+//  Money management
+//  Merged from the update/warranty branch.
 // ─────────────────────────────────────────────
-//
-// Sales already live in Payment/SupplierPayment, so nothing here re-records
-// takings. This module only tracks what the owner *does* with the money once
-// it is in the drawer: what he banks, what he spends, what he gives away.
-//
-// Two places hold money — the cash drawer, and each BankAccount. Every
-// transaction below moves money between those two, or out of the business
-// entirely. Balances are never stored; they are summed from the ledger so a
-// mis-keyed entry can be deleted and the balance simply corrects itself.
+
+enum MoneyTxType {
+  DEPOSIT // cash drawer  → bank
+  WITHDRAWAL // bank         → cash drawer
+  EXPENSE // out of the business (rent, salaries, fuel…)
+  DONATION // out of the business, given away
+  OTHER_INCOME // in from something that is not a sale
+  ADJUSTMENT // correction / opening float; amount may be negative
+}
 
 model BankAccount {
   id            String  @id @default(uuid())
@@ -664,23 +633,34 @@ model BankAccount {
   @@index([isActive])
 }
 
-// Cash in hand is a running total, so it can only be trusted from a point the
-// owner actually counted the drawer. Without this, the figure would reach back
-// through every cash sale the shop ever made and every cash payment it ever
-// sent out — years of history that never sat in today's drawer — and come out
-// as a large, meaningless number.
-//
-// One row, id "default".
-model MoneySettings {
-  id String @id @default("default")
+model MoneyTransaction {
+  id     String      @id @default(uuid())
+  type   MoneyTxType
+  amount Decimal     @db.Decimal(14, 2)
 
-  // The day the drawer was counted. Nothing before it counts towards cash.
-  cashTrackingStartDate DateTime?
+  // Which side of the business the money sits on. null means the cash drawer.
+  // For DEPOSIT/WITHDRAWAL this is the bank end of the move — the other end is
+  // always the drawer, so a deposit without a bank makes no sense.
+  bankAccountId String?
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
 
-  // What was physically in the drawer on that morning.
-  openingCashFloat Decimal @default(0) @db.Decimal(14, 2)
+  // Free-form on purpose: a hardware shop's spending categories change faster
+  // than a migration can keep up with.
+  category    String?
+  description String?
+  reference   String?
 
-  updatedAt DateTime @updatedAt @default(now())
+  occurredAt DateTime @default(now())
+
+  createdByUserId String?
+  createdByUser   User?   @relation(fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([occurredAt])
+  @@index([type])
+  @@index([bankAccountId])
 }
 
 // One drawer count, normally at the end of the day.
@@ -712,135 +692,21 @@ model CashCount {
   @@index([countedFor])
 }
 
-enum MoneyTxType {
-  DEPOSIT // cash drawer  → bank
-  WITHDRAWAL // bank         → cash drawer
-  EXPENSE // out of the business (rent, salaries, fuel…)
-  DONATION // out of the business, given away
-  OTHER_INCOME // in from something that is not a sale
-  ADJUSTMENT // correction / opening float; amount may be negative
-}
+// Cash in hand is a running total, so it can only be trusted from a point the
+// owner actually counted the drawer. Without this, the figure would reach back
+// through every cash sale the shop ever made and every cash payment it ever
+// sent out — years of history that never sat in today's drawer — and come out
+// as a large, meaningless number.
+//
+// One row, id "default".
+model MoneySettings {
+  id String @id @default("default")
 
-model MoneyTransaction {
-  id     String      @id @default(uuid())
-  type   MoneyTxType
-  amount Decimal     @db.Decimal(14, 2)
+  // The day the drawer was counted. Nothing before it counts towards cash.
+  cashTrackingStartDate DateTime?
 
-  // Which side of the business the money sits on. null means the cash drawer.
-  // For DEPOSIT/WITHDRAWAL this is the bank end of the move — the other end is
-  // always the drawer, so a deposit without a bank makes no sense.
-  bankAccountId String?
-  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
+  // What was physically in the drawer on that morning.
+  openingCashFloat Decimal @default(0) @db.Decimal(14, 2)
 
-  // Free-form on purpose: a hardware shop's spending categories change faster
-  // than a migration can keep up with.
-  category    String?
-  description String?
-  reference   String?
-
-  occurredAt DateTime @default(now())
-
-  createdByUserId String?
-  createdByUser   User?   @relation(fields: [createdByUserId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([occurredAt])
-  @@index([type])
-  @@index([bankAccountId])
-  id              String        @id @default(uuid())
-  purchaseOrderId String
-  supplierId      String
-  amount          Decimal       @db.Decimal(12, 2)
-  method          PaymentMethod @default(CASH)
-  reference       String?
-  /// Set when this payment reverses another (a bounced cheque).
-  reversesId      String?
-  paidAt          DateTime      @default(now())
-  createdAt       DateTime      @default(now())
-
-  purchaseOrder  PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
-  supplier       Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  supplierCheque SupplierCheque?
-
-  @@index([purchaseOrderId])
-  @@index([supplierId])
-  @@index([paidAt])
-}
-
-model SupplierCheque {
-  id                String       @id @default(uuid())
-  supplierPaymentId String       @unique
-  chequeNumber      String
-  bank              String
-  amount            Decimal      @db.Decimal(12, 2)
-  chequeDate        DateTime
-  passedDate        DateTime?
-  status            ChequeStatus @default(PENDING)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-
-  supplierPayment SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
-
-  @@index([status])
-  @@index([chequeDate])
-  @@index([chequeNumber])
-}
-
-model StockMovement {
-  id        String            @id @default(uuid())
-  itemId    String
-  type      StockMovementType
-  /// Signed: negative for stock leaving, positive for stock arriving.
-  quantity  Decimal           @db.Decimal(12, 3)
-  /// Stock level immediately after this movement, for point-in-time audit.
-  balance   Decimal           @db.Decimal(12, 3)
-  purpose   String?
-  note      String?
-  /// Who caused the movement, and which document it belongs to.
-  userId    String?
-  billId    String?
-  createdAt DateTime          @default(now())
-
-  item Item  @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([itemId])
-  @@index([userId])
-  @@index([type])
-  @@index([createdAt])
-  @@index([purpose])
-}
-
-model PurchaseBatch {
-  id              String   @id @default(uuid())
-  itemId          String
-  /// Traceability: which delivery and supplier this cost layer came from.
-  purchaseOrderId String?
-  supplierId      String?
-  quantity        Decimal  @db.Decimal(12, 3)
-  remainingQty    Decimal  @db.Decimal(12, 3)
-  buyingPrice     Decimal  @db.Decimal(12, 2)
-  sellingPrice    Decimal  @db.Decimal(12, 2)
-  createdAt       DateTime @default(now())
-
-  item          Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
-  supplier      Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  billItems     BillItem[]
-
-  @@index([itemId])
-  @@index([purchaseOrderId])
-  @@index([supplierId])
-  // Drives the FIFO lookup: oldest batch with stock remaining, per item.
-  @@index([itemId, remainingQty, createdAt])
-}
-
-/// Source of sequential document numbers. Incremented inside the same
-/// transaction as the document it numbers, so numbers are gapless under
-/// concurrency and cannot collide.
-model DocumentCounter {
-  id    String @id
-  value Int    @default(0)
+  updatedAt DateTime @default(now()) @updatedAt
 }

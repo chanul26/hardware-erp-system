@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, CheckCircle2,
-  Loader2, Printer, Barcode, UserCircle, X, AlertTriangle, TrendingUp, ShieldCheck
   Loader2, Barcode, UserCircle, X, AlertTriangle, TrendingUp
 } from "lucide-react";
 
@@ -40,7 +39,7 @@ interface CartItem {
 
   // ── Warranty ──
   // supplierWarrantyMonths is what the supplier actually gave for this batch;
-  // warrantyMonths is what the cashier is issuing (0 = decline to issue).
+  // warrantyMonths is what the cashier is issuing (0 declines).
   supplierWarrantyMonths?: number | null;
   warrantyMonths?: number | null;
   requiresSerial?: boolean;
@@ -162,6 +161,9 @@ export default function BillingPage() {
 
         if (quantity !== line.quantity || price !== line.price) adjusted.push(line.name);
 
+        const supplierWarrantyMonths =
+          live.warrantyEligible && live.warrantyMonths ? live.warrantyMonths : null;
+
         return quantity > 0
           ? [
               {
@@ -170,6 +172,19 @@ export default function BillingPage() {
                 buyingPrice: parseFloat(live.buyingPrice),
                 maxStock,
                 quantity,
+                // Warranty terms belong to the batch, so a restored draft takes
+                // whatever that batch carries now rather than what it did when
+                // the line was added.
+                supplierWarrantyMonths,
+                warrantyMonths: supplierWarrantyMonths
+                  ? (line.warrantyMonths ?? supplierWarrantyMonths)
+                  : null,
+                requiresSerial: Boolean(
+                  supplierWarrantyMonths && live.requiresSerial
+                ),
+                serials: supplierWarrantyMonths
+                  ? resizeSerials(line.serials, quantity)
+                  : [],
               },
             ]
           : (dropped.push(line.name), []);
@@ -298,6 +313,18 @@ export default function BillingPage() {
     };
   }, [customerQuery]);
 
+  // One serial slot per unit — grows and shrinks with the quantity, keeping
+  // whatever the cashier has already typed.
+  const resizeSerials = (
+    serials: string[] | undefined,
+    quantity: number
+  ): string[] => {
+    const target = Math.max(0, Math.round(quantity));
+    const next = [...(serials || [])];
+    while (next.length < target) next.push("");
+    return next.slice(0, target);
+  };
+
   const addToCart = (item: CatalogItem) => {
     const price = parseFloat(item.sellingPrice);
     const buyingPrice = parseFloat(item.buyingPrice);
@@ -309,12 +336,16 @@ export default function BillingPage() {
         if (existing.quantity >= item.stockQty) return prev;
         return prev.map((cartItem) =>
           cartItem.cartKey === cartKey && !cartItem.isReturn
-            ? { ...cartItem, quantity: cartItem.quantity + 1, serials: resizeSerials(cartItem.serials, cartItem.quantity + 1) }
+            ? {
+                ...cartItem,
+                quantity: cartItem.quantity + 1,
+                serials: resizeSerials(cartItem.serials, cartItem.quantity + 1),
+              }
             : cartItem
         );
       }
 
-      // Warranty is offered only when the supplier backed this batch.
+      // A warranty is only on offer when the supplier backed this batch.
       const supplierWarrantyMonths =
         item.warrantyEligible && item.warrantyMonths ? item.warrantyMonths : null;
 
@@ -330,21 +361,13 @@ export default function BillingPage() {
           quantity: 1,
           maxStock: item.stockQty,
           supplierWarrantyMonths,
+          // Default to passing the supplier's term straight through.
           warrantyMonths: supplierWarrantyMonths,
-          requiresSerial: !!item.requiresSerial,
+          requiresSerial: Boolean(supplierWarrantyMonths && item.requiresSerial),
           serials: supplierWarrantyMonths ? [""] : [],
         },
       ];
     });
-  };
-
-  // One serial slot per unit — grows and shrinks with the quantity, keeping
-  // whatever the cashier has already typed.
-  const resizeSerials = (serials: string[] | undefined, quantity: number): string[] => {
-    const target = Math.max(0, Math.round(quantity));
-    const next = [...(serials || [])];
-    while (next.length < target) next.push("");
-    return next.slice(0, target);
   };
 
   const updateQuantity = (cartKey: string, delta: number) => {
@@ -353,7 +376,11 @@ export default function BillingPage() {
         if (item.cartKey === cartKey) {
           const newQty = item.quantity - 1;
           if (newQty <= 0) return null;
-          return { ...item, quantity: newQty, serials: resizeSerials(item.serials, newQty) };
+          return {
+            ...item,
+            quantity: newQty,
+            serials: resizeSerials(item.serials, newQty),
+          };
         }
         return item;
       }).filter(Boolean) as CartItem[]);
@@ -365,7 +392,15 @@ export default function BillingPage() {
       if (!currentItem || currentItem.isReturn) return prev; 
 
       if (currentItem.quantity < currentItem.maxStock) {
-        return prev.map((item) => item.cartKey === cartKey ? { ...item, quantity: item.quantity + 1, serials: resizeSerials(item.serials, item.quantity + 1) } : item);
+        return prev.map((item) =>
+          item.cartKey === cartKey
+            ? {
+                ...item,
+                quantity: item.quantity + 1,
+                serials: resizeSerials(item.serials, item.quantity + 1),
+              }
+            : item
+        );
       }
 
       const nextBatch = catalog.find((catalogItem) => catalogItem.id === currentItem.id && catalogItem.batchId !== currentItem.batchId);
@@ -374,11 +409,8 @@ export default function BillingPage() {
       const existingNext = prev.find((item) => item.batchId === nextBatch.batchId);
       if (existingNext) {
         if (existingNext.quantity >= existingNext.maxStock) return prev;
-        return prev.map((item) => item.batchId === nextBatch.batchId ? { ...item, quantity: item.quantity + 1, serials: resizeSerials(item.serials, item.quantity + 1) } : item);
+        return prev.map((item) => item.batchId === nextBatch.batchId ? { ...item, quantity: item.quantity + 1 } : item);
       }
-
-      const nextSupplierWarrantyMonths =
-        nextBatch.warrantyEligible && nextBatch.warrantyMonths ? nextBatch.warrantyMonths : null;
 
       return [
         ...prev,
@@ -391,10 +423,6 @@ export default function BillingPage() {
           buyingPrice: parseFloat(nextBatch.buyingPrice),
           quantity: 1,
           maxStock: nextBatch.stockQty,
-          supplierWarrantyMonths: nextSupplierWarrantyMonths,
-          warrantyMonths: nextSupplierWarrantyMonths,
-          requiresSerial: !!nextBatch.requiresSerial,
-          serials: nextSupplierWarrantyMonths ? [""] : [],
         },
       ];
     });
@@ -411,26 +439,6 @@ export default function BillingPage() {
 
   const belowCostItems = cart.filter(item => !item.isReturn && (item.overridePrice ?? item.price) < item.buyingPrice);
   const hasBelowCostItem = belowCostItems.length > 0;
-
-  // Serials must be unique per product. Catching it here saves the cashier
-  // from a rejected checkout after they have already taken the money.
-  const duplicateSerials = (() => {
-    const seen = new Set<string>();
-    const dupes = new Set<string>();
-    for (const item of cart) {
-      if (item.isReturn) continue;
-      for (const serial of item.serials || []) {
-        const trimmed = serial.trim();
-        if (!trimmed) continue;
-        const key = `${item.id}::${trimmed.toLowerCase()}`;
-        if (seen.has(key)) dupes.add(trimmed);
-        seen.add(key);
-      }
-    }
-    return Array.from(dupes);
-  })();
-
-  const hasDuplicateSerial = duplicateSerials.length > 0;
 
   const totalSales = cart.filter(i => !i.isReturn).reduce((sum, item) => sum + (item.overridePrice ?? item.price) * item.quantity, 0);
   const totalCost = cart.filter(i => !i.isReturn).reduce((sum, item) => sum + item.buyingPrice * item.quantity, 0);
@@ -461,7 +469,7 @@ export default function BillingPage() {
   };
 
   const handleCheckout = async () => {
-    if (cart.length === 0 || hasBelowCostItem || hasDuplicateSerial) return;
+    if (cart.length === 0 || hasBelowCostItem) return;
 
     const finalAmountPaid = amountPaid !== "" ? parseFloat(amountPaid) : finalTotal;
 
@@ -500,6 +508,10 @@ export default function BillingPage() {
                   batchId: item.batchId,
                   quantity: item.quantity,
                   price: item.overridePrice ?? item.price,
+                  // Blank slots are dropped; the server treats a missing serial
+                  // as "not recorded" rather than an error.
+                  serials: (item.serials ?? []).map((v) => v.trim()).filter(Boolean),
+                  warrantyMonths: item.warrantyMonths ?? null,
                 }
           ),
           customerId: selectedCustomer?.id || undefined,
@@ -524,7 +536,7 @@ export default function BillingPage() {
         totalAmount: Number(bill.totalAmount),
         amountPaid: Number(bill.amountPaid),
         date: new Date().toLocaleString(),
-        warranties: data.warranties || [],
+        warranties: bill.warranties ?? [],
       });
 
       setMessage({
@@ -768,9 +780,6 @@ export default function BillingPage() {
                               value={item.quantity.toString()}
                               max={item.maxStock}
                               onChange={(e) => {
-                                const newQty = parseFloat(e.target.value);
-                                if (!isNaN(newQty) && newQty > 0) {
-                                  setCart(prev => prev.map(c => c.cartKey === item.cartKey ? { ...c, quantity: newQty, serials: resizeSerials(c.serials, newQty) } : c));
                                 const parsed = parseFloat(e.target.value);
                                 if (isNaN(parsed) || parsed <= 0) return;
                                 // Clamp to what this batch actually holds. The
@@ -785,7 +794,13 @@ export default function BillingPage() {
                                 }
                                 setCart((prev) =>
                                   prev.map((c) =>
-                                    c.cartKey === item.cartKey ? { ...c, quantity: newQty } : c
+                                    c.cartKey === item.cartKey
+                                      ? {
+                                          ...c,
+                                          quantity: newQty,
+                                          serials: resizeSerials(c.serials, newQty),
+                                        }
+                                      : c
                                   )
                                 );
                               }}
@@ -802,29 +817,37 @@ export default function BillingPage() {
                       </div>
                     </div>
 
-                    {/* ── WARRANTY ── */}
+                    {/* Warranty — only offered when the supplier backed this
+                        batch, so uncovered stock shows nothing at all. */}
                     {!item.isReturn && item.supplierWarrantyMonths ? (
-                      <div className="mt-2 pt-2 border-t border-emerald-200 bg-emerald-50/60 -mx-2 -mb-2 px-2 pb-2 rounded-b-lg">
+                      <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-800">
-                            <ShieldCheck className="h-3 w-3" />
-                            Supplier warranty: {item.supplierWarrantyMonths} months
+                          <span className="text-[11px] font-medium text-emerald-800">
+                            Supplier gave {item.supplierWarrantyMonths} mo
                           </span>
                           <div className="flex items-center gap-1">
                             <input
                               type="number"
                               min="0"
                               step="1"
+                              aria-label={`Warranty months for ${item.name}`}
                               value={item.warrantyMonths ?? ""}
                               onChange={(e) => {
-                                const months = e.target.value === "" ? null : Number(e.target.value);
-                                setCart((prev) => prev.map((c) =>
-                                  c.cartKey === item.cartKey ? { ...c, warrantyMonths: months } : c
-                                ));
+                                const months =
+                                  e.target.value === "" ? null : Number(e.target.value);
+                                setCart((prev) =>
+                                  prev.map((c) =>
+                                    c.cartKey === item.cartKey
+                                      ? { ...c, warrantyMonths: months }
+                                      : c
+                                  )
+                                );
                               }}
                               className="w-14 text-xs text-center border border-emerald-300 rounded px-1 py-0.5 bg-white"
                             />
-                            <span className="text-[11px] text-emerald-800">mo to customer</span>
+                            <span className="text-[11px] text-emerald-800">
+                              mo to customer
+                            </span>
                           </div>
                         </div>
 
@@ -842,14 +865,17 @@ export default function BillingPage() {
                                 key={index}
                                 type="text"
                                 value={serial}
+                                aria-label={`Serial for unit ${index + 1} of ${item.name}`}
                                 onChange={(e) => {
                                   const value = e.target.value;
-                                  setCart((prev) => prev.map((c) => {
-                                    if (c.cartKey !== item.cartKey) return c;
-                                    const serials = [...(c.serials || [])];
-                                    serials[index] = value;
-                                    return { ...c, serials };
-                                  }));
+                                  setCart((prev) =>
+                                    prev.map((c) => {
+                                      if (c.cartKey !== item.cartKey) return c;
+                                      const serials = [...(c.serials || [])];
+                                      serials[index] = value;
+                                      return { ...c, serials };
+                                    })
+                                  );
                                 }}
                                 placeholder={`Unit ${index + 1} serial`}
                                 className="w-full text-xs border border-emerald-300 rounded px-2 py-1 bg-white font-mono"
@@ -858,7 +884,8 @@ export default function BillingPage() {
                           </div>
                         ) : null}
 
-                        {item.warrantyMonths && item.warrantyMonths > item.supplierWarrantyMonths ? (
+                        {item.warrantyMonths &&
+                        item.warrantyMonths > item.supplierWarrantyMonths ? (
                           <p className="text-[10px] text-orange-700 font-bold mt-1">
                             Longer than the supplier gave — the shop covers the extra{" "}
                             {item.warrantyMonths - item.supplierWarrantyMonths} months.
@@ -879,18 +906,6 @@ export default function BillingPage() {
                 <div>
                   <p className="text-xs font-bold uppercase">Loss Alert — Checkout Blocked</p>
                   <p className="text-[10px] mt-0.5 opacity-90">Please fix below cost items.</p>
-                </div>
-              </div>
-            )}
-
-            {hasDuplicateSerial && (
-              <div className="p-3 bg-orange-600 text-white rounded-lg flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-bold uppercase">Duplicate Serial — Checkout Blocked</p>
-                  <p className="text-[10px] mt-0.5 opacity-90">
-                    {duplicateSerials.join(", ")} entered more than once. Each unit needs its own serial.
-                  </p>
                 </div>
               </div>
             )}
@@ -981,7 +996,7 @@ export default function BillingPage() {
               </button>
             )}
 
-            <button onClick={handleCheckout} disabled={cart.length === 0 || isProcessing || hasBelowCostItem || hasDuplicateSerial} className="w-full py-3 rounded-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+            <button onClick={handleCheckout} disabled={cart.length === 0 || isProcessing || hasBelowCostItem} className="w-full py-3 rounded-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
               {isProcessing ? "Processing..." : "Checkout & Print"}
             </button>
           </div>
@@ -1208,6 +1223,23 @@ export default function BillingPage() {
               ))}
             </tbody>
           </table>
+          {lastInvoice.warranties.length > 0 && (
+            <div className="border-t border-dashed border-black pt-2 mb-2 text-left">
+              <p className="font-bold">WARRANTY</p>
+              {lastInvoice.warranties.map((w) => (
+                <div key={w.warrantyNumber} className="mb-1">
+                  <p>{w.itemName.substring(0, 20)}</p>
+                  <p>
+                    {w.warrantyNumber} · {w.months} mo
+                  </p>
+                  {w.serialNumber && <p>S/N: {w.serialNumber}</p>}
+                  <p>Until {new Date(w.endDate).toLocaleDateString()}</p>
+                </div>
+              ))}
+              <p className="text-[10px]">Keep this receipt for any claim.</p>
+            </div>
+          )}
+
           <div className="border-t border-dashed border-black pt-2 mb-6 text-right">
             <p>SUBTOTAL: Rs. {lastInvoice.subtotal.toFixed(2)}</p>
             {lastInvoice.discount > 0 && <p className="text-xs uppercase">DISCOUNT: - Rs. {lastInvoice.discount.toFixed(2)}</p>}
@@ -1231,27 +1263,6 @@ export default function BillingPage() {
                </>
             )}
           </div>
-
-          {/* WARRANTY — the customer's proof of cover */}
-          {lastInvoice.warranties.length > 0 && (
-            <div className="border-t border-dashed border-black pt-2 mb-4">
-              <p className="font-bold text-center mb-1">— WARRANTY —</p>
-              {lastInvoice.warranties.map((warranty) => (
-                <div key={warranty.warrantyNumber} className="mb-2 text-xs">
-                  <p className="font-bold">{warranty.itemName.substring(0, 22)}</p>
-                  <p>No: {warranty.warrantyNumber}</p>
-                  {warranty.serialNumber && <p>SN: {warranty.serialNumber}</p>}
-                  <p>
-                    {warranty.months} months — valid until{" "}
-                    {new Date(warranty.endDate).toLocaleDateString()}
-                  </p>
-                </div>
-              ))}
-              <p className="text-[10px] text-center mt-1">
-                Keep this receipt. It is required for any warranty claim.
-              </p>
-            </div>
-          )}
         </div>
       )}
     </>

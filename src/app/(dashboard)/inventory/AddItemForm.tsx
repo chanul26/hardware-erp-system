@@ -101,26 +101,23 @@ export default function AddItemForm({
         formData.get("buyingPrice") || 0
       ),
 
-      sellingPrice: 0,
+      sellingPrice: Number(
+        formData.get("sellingPrice") || 0
+      ),
 
       // WARRANTY
+      // The term and the serial requirement only mean anything for an eligible
+      // product, so both are cleared when eligibility is off.
 
       warrantyEligible,
 
       defaultWarrantyMonths:
         warrantyEligible
-          ? Number(
-              defaultWarrantyMonths
-            ) || null
+          ? Number(defaultWarrantyMonths) || null
           : null,
 
       requiresSerial:
-        warrantyEligible
-          ? requiresSerial
-          : false,
-      sellingPrice: Number(
-        formData.get("sellingPrice") || 0
-      ),
+        warrantyEligible ? requiresSerial : false,
     };
 
     try {

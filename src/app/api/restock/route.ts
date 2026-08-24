@@ -1,4 +1,9 @@
-import { OrderStatus, PaymentMethod, StockMovementType } from "@prisma/client";
+import {
+  OrderStatus,
+  PaymentMethod,
+  Prisma,
+  StockMovementType,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { badRequest, conflict, ok, parseBody, route } from "@/lib/api";
 import { requireManager } from "@/lib/authz";
@@ -38,7 +43,7 @@ export const POST = route("POST /api/restock", async (req) => {
   const itemIds = [...new Set(body.items.map((line) => line.itemId))];
   const items = await prisma.item.findMany({
     where: { id: { in: itemIds } },
-    select: { id: true, name: true, isActive: true },
+    select: { id: true, name: true, isActive: true, warrantyEligible: true },
   });
 
   if (items.length !== itemIds.length) {
@@ -57,477 +62,16 @@ export const POST = route("POST /api/restock", async (req) => {
     }
   }
 
-    // TOTAL
-
-    const totalAmount =
-      items.reduce(
-        (
-          sum: number,
-          item: any
-        ) =>
-          sum +
-          item.quantity *
-            item.unitCost,
-        0
-      );
-
-    // PAID AMOUNT
-
-    const finalAmountPaid =
-      amountPaid !==
-        undefined &&
-      amountPaid !== ""
-        ? Number(amountPaid)
-        : 0;
-
-    // PAYMENT STATUS
-
-    let paymentStatus =
-      "UNPAID";
-
-    if (
-      finalAmountPaid >=
-      totalAmount
-    ) {
-
-      paymentStatus =
-        "PAID";
-
-    } else if (
-      finalAmountPaid > 0
-    ) {
-
-      paymentStatus =
-        "PARTIAL";
-    }
-
-    // TRANSACTION
-
-    const result =
-      await prisma.$transaction(
-        async (tx) => {
-
-          // CREATE PURCHASE ORDER
-
-          const po =
-            await tx.purchaseOrder.create({
-
-              data: {
-
-                orderNumber:
-                  `RCV-${Date.now()
-                    .toString()
-                    .slice(-6)}`,
-
-                supplierId,
-
-                status:
-                  "RECEIVED",
-
-                paymentStatus,
-
-                totalAmount,
-
-                amountPaid:
-                  finalAmountPaid,
-
-                notes:
-                  notes ||
-                  "Direct Inbound Restock",
-
-                receivedAt:
-                  new Date(),
-
-                purchaseItems: {
-
-                  create:
-                    items.map(
-                      (
-                        item: any
-                      ) => ({
-
-                        itemId:
-                          item.itemId,
-
-                        quantity:
-                          item.quantity,
-
-                        unitCost:
-                          item.unitCost,
-
-                        totalCost:
-                          item.quantity *
-                          item.unitCost,
-
-                        receivedQty:
-                          item.quantity,
-
-                      })
-                    ),
-
-                },
-
-              },
-
-            });
-
-          // CASH PAYMENT
-
-          if (
-            paymentMethod ===
-              "CASH" &&
-            finalAmountPaid >
-              0
-          ) {
-
-            await tx.supplierPayment.create({
-
-              data: {
-
-                purchaseOrderId:
-                  po.id,
-
-                supplierId,
-
-                amount:
-                  finalAmountPaid,
-
-                method:
-                  "CASH",
-
-                // Cash paid to a supplier normally comes from the owner's
-                // wallet rather than the shop till, and is often a mix of
-                // both — so the drawer's share is stated, not assumed, and
-                // can never exceed what was actually paid.
-                drawerAmount:
-                  Math.min(
-                    Math.max(
-                      Number(
-                        body.drawerAmount
-                      ) || 0,
-                      0
-                    ),
-                    finalAmountPaid
-                  ),
-
-              },
-
-            });
-          }
-
-          // CHEQUE PAYMENT
-
-          if (
-            paymentMethod ===
-            "CHEQUE"
-          ) {
-
-            const payment =
-              await tx.supplierPayment.create({
-
-                data: {
-
-                  purchaseOrderId:
-                    po.id,
-
-                  supplierId,
-
-                  amount:
-                    Number(
-                      chequeAmount
-                    ),
-
-                  method:
-                    "CHEQUE",
-
-                },
-
-              });
-
-            await tx.supplierCheque.create({
-
-              data: {
-
-                supplierPaymentId:
-                  payment.id,
-
-                chequeNumber,
-
-                bank:
-                  bankName,
-
-                amount:
-                  Number(
-                    chequeAmount
-                  ),
-
-                chequeDate:
-                  new Date(
-                    chequeDate
-                  ),
-
-                status:
-                  "PENDING",
-
-              },
-
-            });
-          }
-
-          // MIXED PAYMENT
-
-          if (
-            paymentMethod ===
-            "MIXED"
-          ) {
-
-            // CASH PART
-
-            if (
-              finalAmountPaid >
-              0
-            ) {
-
-              await tx.supplierPayment.create({
-
-                data: {
-
-                  purchaseOrderId:
-                    po.id,
-
-                  supplierId,
-
-                  amount:
-                    finalAmountPaid,
-
-                  method:
-                    "CASH",
-
-                },
-
-              });
-            }
-
-            // CHEQUE PART
-
-            const remainingCheque =
-              Number(
-                chequeAmount
-              );
-
-            if (
-              remainingCheque >
-              0
-            ) {
-
-              const payment =
-                await tx.supplierPayment.create({
-
-                  data: {
-
-                    purchaseOrderId:
-                      po.id,
-
-                    supplierId,
-
-                    amount:
-                      remainingCheque,
-
-                    method:
-                      "CHEQUE",
-
-                  },
-
-                });
-
-              await tx.supplierCheque.create({
-
-                data: {
-
-                  supplierPaymentId:
-                    payment.id,
-
-                  chequeNumber,
-
-                  bank:
-                    bankName,
-
-                  amount:
-                    remainingCheque,
-
-                  chequeDate:
-                    new Date(
-                      chequeDate
-                    ),
-
-                  status:
-                    "PENDING",
-
-                },
-
-              });
-            }
-          }
-
-          // WARRANTY ELIGIBILITY
-          //
-          // Warranty terms are only recorded for products flagged as
-          // warranty-eligible. Anything else silently drops the terms even if
-          // the client sent them.
-
-          const eligibleItems =
-            await tx.item.findMany({
-
-              where: {
-
-                id: {
-                  in: items.map(
-                    (
-                      item: any
-                    ) =>
-                      item.itemId
-                  ),
-                },
-
-                warrantyEligible:
-                  true,
-              },
-
-              select: {
-                id: true,
-              },
-
-            });
-
-          const eligibleIds =
-            new Set(
-              eligibleItems.map(
-                (
-                  item
-                ) => item.id
-              )
-            );
-
-          // UPDATE INVENTORY + CREATE FIFO BATCHES
-
-          for (const item of items) {
-
-            // UPDATE ITEM STOCK
-
-            await tx.item.update({
-
-              where: {
-                id: item.itemId,
-              },
-
-              data: {
-
-                stockQty: {
-                  increment:
-                    item.quantity,
-                },
-
-                buyingPrice:
-                  Number(
-                    item.unitCost
-                  ),
-
-                // LATEST SELLING PRICE
-
-                sellingPrice:
-                  Number(
-                    item.sellingPrice
-                  ),
-
-              },
-
-            });
-
-            // WARRANTY TERMS FOR THIS SHIPMENT
-
-            const isEligible =
-              eligibleIds.has(
-                item.itemId
-              );
-
-            const months =
-              Number(
-                item.warrantyMonths
-              );
-
-            const warrantyMonths =
-              isEligible &&
-              Number.isFinite(
-                months
-              ) &&
-              months > 0
-                ? Math.round(
-                    months
-                  )
-                : null;
-
-            // CREATE PURCHASE BATCH
-
-            await tx.purchaseBatch.create({
-
-              data: {
-
-                itemId:
-                  item.itemId,
-
-                quantity:
-                  item.quantity,
-
-                remainingQty:
-                  item.quantity,
-
-                buyingPrice:
-                  Number(
-                    item.unitCost
-                  ),
-
-                sellingPrice:
-                  Number(
-                    item.sellingPrice
-                  ),
-
-                // WARRANTY
-
-                warrantyMonths,
-
-                supplierWarrantyRef:
-                  warrantyMonths
-                    ? item.supplierWarrantyRef ||
-                      null
-                    : null,
-
-                supplierId,
-
-                purchaseOrderId:
-                  po.id,
-
-              },
-
-            });
-
-          }
-
-          return po;
-        }
-      );
-
-    return NextResponse.json({
-
-      success: true,
-
-      message:
-        "Stock updated successfully",
   const totalAmount = body.items.reduce(
     (sum, line) => sum.plus(dec(line.quantity).mul(dec(line.unitCost))),
     dec(0)
   );
 
+  // Cash paid to a supplier normally comes from the owner's wallet rather than
+  // the shop till, and is often a mix of both — so the drawer's share is stated,
+  // never assumed, and can never exceed what was actually paid in cash.
   const cashPaid = dec(body.paymentMethod === "CHEQUE" ? 0 : body.amountPaid);
+  const fromDrawer = Prisma.Decimal.min(dec(body.drawerAmount ?? 0), cashPaid);
   const chequePaid = dec(body.paymentMethod === "CASH" ? 0 : body.chequeAmount);
 
   if (cashPaid.plus(chequePaid).gt(totalAmount)) {
@@ -569,6 +113,7 @@ export const POST = route("POST /api/restock", async (req) => {
             supplierId: supplier.id,
             amount: cashPaid,
             method: PaymentMethod.CASH,
+            drawerAmount: fromDrawer,
           },
         });
       }
@@ -611,6 +156,17 @@ export const POST = route("POST /api/restock", async (req) => {
             remainingQty: quantity,
             buyingPrice: dec(line.unitCost),
             sellingPrice: dec(line.sellingPrice),
+
+            // Warranty terms are agreed per shipment, so they belong to the
+            // batch. Recorded only for products flagged warranty-eligible —
+            // terms sent for anything else are dropped rather than stored
+            // against stock that can never issue a warranty.
+            warrantyMonths: item.warrantyEligible
+              ? (line.warrantyMonths ?? null)
+              : null,
+            supplierWarrantyRef: item.warrantyEligible
+              ? (line.supplierWarrantyRef ?? null)
+              : null,
           },
         });
 
@@ -644,6 +200,7 @@ export const POST = route("POST /api/restock", async (req) => {
         totalAmount,
         amountPaid: state.amountPaid,
         paymentStatus: state.paymentStatus,
+        fromDrawer,
       };
     },
     { timeout: 20_000 }
