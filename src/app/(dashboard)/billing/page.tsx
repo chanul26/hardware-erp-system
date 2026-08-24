@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, CheckCircle2,
-  Loader2, Printer, Barcode, UserCircle, X, AlertTriangle, TrendingUp
+  Loader2, Barcode, UserCircle, X, AlertTriangle, TrendingUp
 } from "lucide-react";
 
 interface CatalogItem {
@@ -49,6 +49,7 @@ export default function BillingPage() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [searchTerm, setSearchBase] = useState("");
   const [loadingCatalog, setLoadingCatalog] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<string>("");
@@ -89,16 +90,82 @@ export default function BillingPage() {
 
   // 1. Load Draft on Mount
   useEffect(() => {
-    const savedCart = localStorage.getItem("erp_cart");
-    const savedCustomer = localStorage.getItem("erp_customer");
-    const savedDiscount = localStorage.getItem("erp_discount");
+    try {
+      const savedCart = localStorage.getItem("erp_cart");
+      const savedCustomer = localStorage.getItem("erp_customer");
+      const savedDiscount = localStorage.getItem("erp_discount");
 
-    if (savedCart) setCart(JSON.parse(savedCart));
-    if (savedCustomer) setSelectedCustomer(JSON.parse(savedCustomer));
-    if (savedDiscount) setDiscount(savedDiscount);
+      if (savedCart) setCart(JSON.parse(savedCart));
+      if (savedCustomer) setSelectedCustomer(JSON.parse(savedCustomer));
+      if (savedDiscount) setDiscount(savedDiscount);
+    } catch {
+      // Corrupt or unavailable storage must not stop the till opening.
+      localStorage.removeItem("erp_cart");
+      localStorage.removeItem("erp_customer");
+      localStorage.removeItem("erp_discount");
+    }
 
     setIsStateLoaded(true);
   }, []);
+
+  /**
+   * A restored draft holds prices and stock levels captured when the item was
+   * added, which may be hours stale after a restock or another till's sale.
+   * Reconcile it against the live catalogue rather than letting checkout fail
+   * with an error the cashier cannot interpret.
+   */
+  useEffect(() => {
+    if (!isStateLoaded || loadingCatalog || catalog.length === 0) return;
+
+    setCart((prev) => {
+      if (prev.length === 0) return prev;
+
+      const dropped: string[] = [];
+      const adjusted: string[] = [];
+
+      const reconciled = prev.flatMap((line) => {
+        if (line.isReturn) return [line];
+
+        const live = catalog.find((c) => c.batchId === line.batchId && c.id === line.id);
+
+        if (!live) {
+          dropped.push(line.name);
+          return [];
+        }
+
+        const price = parseFloat(live.sellingPrice);
+        const maxStock = live.stockQty;
+        const quantity = Math.min(line.quantity, maxStock);
+
+        if (quantity !== line.quantity || price !== line.price) adjusted.push(line.name);
+
+        return quantity > 0
+          ? [
+              {
+                ...line,
+                price,
+                buyingPrice: parseFloat(live.buyingPrice),
+                maxStock,
+                quantity,
+              },
+            ]
+          : (dropped.push(line.name), []);
+      });
+
+      if (dropped.length === 0 && adjusted.length === 0) return prev;
+
+      const notes = [
+        dropped.length ? `${dropped.join(", ")} no longer available` : "",
+        adjusted.length ? `${adjusted.join(", ")} updated to current price/stock` : "",
+      ].filter(Boolean);
+
+      setMessage({ type: "error", text: `Saved cart adjusted: ${notes.join("; ")}.` });
+
+      return reconciled;
+    });
+    // Runs once per catalogue load, not on every cart edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStateLoaded, loadingCatalog, catalog]);
 
   // 2. Save Draft on Change
   useEffect(() => {
@@ -156,21 +223,56 @@ export default function BillingPage() {
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, [catalog]);
 
+  const loadCatalog = async () => {
+    const res = await fetch("/api/items");
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Could not load the product catalogue.");
+    return json.data as CatalogItem[];
+  };
+
   useEffect(() => {
-    fetch("/api/items").then(res => res.json()).then(json => {
-      if (json.success) setCatalog(json.data);
-      setLoadingCatalog(false);
-    });
+    let cancelled = false;
+
+    loadCatalog()
+      .then((items) => {
+        if (cancelled) return;
+        setCatalog(items);
+        setCatalogError(null);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setCatalogError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCatalog(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (customerQuery.length > 1) {
-      fetch(`/api/customers?search=${customerQuery}&limit=10`)
-        .then(res => res.json())
-        .then(data => setCustomerResults(data.customers || []));
-    } else {
+    if (customerQuery.length <= 1) {
       setCustomerResults([]);
+      return;
     }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(`/api/customers?search=${encodeURIComponent(customerQuery)}&limit=10`, {
+        signal: controller.signal,
+      })
+        .then((res) => res.json())
+        .then((json) => setCustomerResults(json?.data?.customers ?? []))
+        .catch(() => {
+          /* aborted or offline — leave the previous results in place */
+        });
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [customerQuery]);
 
   const addToCart = (item: CatalogItem) => {
@@ -267,8 +369,8 @@ export default function BillingPage() {
         body: JSON.stringify({ name: newCusName, nic: newCusNic, phone: newCusPhone }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setSelectedCustomer(data);
+      if (!res.ok) throw new Error(data.error || "Could not add the customer.");
+      setSelectedCustomer(data.data);
       setCustomerQuery("");
       setIsQuickAddOpen(false);
       setNewCusName(""); setNewCusNic(""); setNewCusPhone("");
@@ -291,42 +393,79 @@ export default function BillingPage() {
 
     setIsProcessing(true);
     setMessage(null);
+
+    // Snapshot the cart: it is cleared on success but still needed for the receipt.
+    const soldItems = cart.map((item) => ({
+      ...item,
+      price: item.overridePrice ?? item.price,
+    }));
+
     try {
       const res = await fetch("/api/bills", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cart.map(item => ({ ...item, price: item.overridePrice ?? item.price })),
+          // Only the facts. The server derives every monetary total itself, so
+          // sending subtotal/totalAmount here would be ignored anyway.
+          items: cart.map((item) =>
+            item.isReturn
+              ? {
+                  isReturn: true,
+                  id: item.id,
+                  originalBillItemId: item.originalBillItemId,
+                  quantity: item.quantity,
+                  price: item.overridePrice ?? item.price,
+                }
+              : {
+                  id: item.id,
+                  batchId: item.batchId,
+                  quantity: item.quantity,
+                  price: item.overridePrice ?? item.price,
+                }
+          ),
           customerId: selectedCustomer?.id || undefined,
-          subtotal,
           discount: numDiscount,
-          totalAmount: finalTotal,
           amountPaid: finalAmountPaid,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload.error || "The sale could not be completed.");
+      }
+
+      const bill = payload.data;
 
       setLastInvoice({
-        billNumber: data.bill.billNumber,
-        items: cart.map(item => ({ ...item, price: item.overridePrice ?? item.price })),
-        subtotal,
-        discount: numDiscount,
-        totalAmount: finalTotal,
-        amountPaid: finalAmountPaid,
+        billNumber: bill.billNumber,
+        items: soldItems,
+        // Show what the server actually recorded, not what the browser computed.
+        subtotal: Number(bill.subtotal),
+        discount: Number(bill.discount),
+        totalAmount: Number(bill.totalAmount),
+        amountPaid: Number(bill.amountPaid),
         date: new Date().toLocaleString(),
       });
 
-      setMessage({ type: "success", text: `Transaction completed. Invoice: ${data.bill.billNumber}` });
-      
-      // Clean up UI and persistent storage after a successful checkout
+      setMessage({
+        type: "success",
+        text: `Transaction completed. Invoice: ${bill.billNumber}`,
+      });
+
       clearCart();
 
-      const refresh = await fetch("/api/items").then(r => r.json());
-      if (refresh.success) setCatalog(refresh.data);
+      try {
+        setCatalog(await loadCatalog());
+      } catch {
+        setCatalogError("Sale saved, but the catalogue could not be refreshed.");
+      }
+
       setTimeout(() => window.print(), 300);
-    } catch (err: any) {
-      setMessage({ type: "error", text: err.message || "Failed to process" });
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to process the sale.",
+      });
     } finally {
       setIsProcessing(false);
     }
@@ -409,6 +548,25 @@ export default function BillingPage() {
             <h3 className="font-bold text-gray-700 mb-4">Product Catalog</h3>
             {loadingCatalog ? (
               <Loader2 className="animate-spin mx-auto mt-10" />
+            ) : catalogError ? (
+              <div className="mt-10 text-center">
+                <p className="text-sm font-medium text-destructive">{catalogError}</p>
+                <button
+                  onClick={() => {
+                    setLoadingCatalog(true);
+                    loadCatalog()
+                      .then((items) => {
+                        setCatalog(items);
+                        setCatalogError(null);
+                      })
+                      .catch((err: Error) => setCatalogError(err.message))
+                      .finally(() => setLoadingCatalog(false));
+                  }}
+                  className="mt-3 rounded-md border border-input px-4 py-1.5 text-sm hover:bg-muted"
+                >
+                  Try again
+                </button>
+              </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {filteredCatalog.map((item) => (
@@ -528,11 +686,25 @@ export default function BillingPage() {
                               step="any"
                               min="0"
                               value={item.quantity.toString()}
+                              max={item.maxStock}
                               onChange={(e) => {
-                                const newQty = parseFloat(e.target.value);
-                                if (!isNaN(newQty) && newQty > 0) {
-                                  setCart(prev => prev.map(c => c.cartKey === item.cartKey ? { ...c, quantity: newQty } : c));
+                                const parsed = parseFloat(e.target.value);
+                                if (isNaN(parsed) || parsed <= 0) return;
+                                // Clamp to what this batch actually holds. The
+                                // +/- buttons already did this; typing did not,
+                                // so an over-quantity only failed at checkout.
+                                const newQty = Math.min(parsed, item.maxStock);
+                                if (newQty < parsed) {
+                                  setMessage({
+                                    type: "error",
+                                    text: `Only ${item.maxStock} of ${item.name} available at this price.`,
+                                  });
                                 }
+                                setCart((prev) =>
+                                  prev.map((c) =>
+                                    c.cartKey === item.cartKey ? { ...c, quantity: newQty } : c
+                                  )
+                                );
                               }}
                               className="w-16 text-center text-sm font-medium bg-transparent border-none focus:ring-0 px-1" 
                             />
@@ -593,7 +765,7 @@ export default function BillingPage() {
                         ))
                       ) : (
                         <div className="p-3 text-center">
-                          <button onClick={() => { setIsDropdownOpen(false); setIsQuickAddOpen(true); setNewCusName(customerQuery); }} className="text-sm bg-primary text-primary-foreground px-3 py-1.5 rounded-md font-medium w-full">Add "{customerQuery}"</button>
+                          <button onClick={() => { setIsDropdownOpen(false); setIsQuickAddOpen(true); setNewCusName(customerQuery); }} className="text-sm bg-primary text-primary-foreground px-3 py-1.5 rounded-md font-medium w-full">Add &quot;{customerQuery}&quot;</button>
                         </div>
                       )}
                     </div>
@@ -655,6 +827,106 @@ export default function BillingPage() {
           </div>
         </div>
       </div>
+
+      {/* Quick-add customer.
+          The state, handler and the "Add ..." trigger all existed, but this
+          modal was never rendered — so the button silently did nothing. */}
+      {isQuickAddOpen && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add customer"
+        >
+          <form
+            onSubmit={handleQuickAdd}
+            className="bg-background w-full max-w-md rounded-xl shadow-xl border border-border"
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-lg font-bold text-foreground">Add customer</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsQuickAddOpen(false);
+                  setQuickAddError("");
+                }}
+                className="text-muted-foreground hover:bg-muted p-1 rounded-full"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              {quickAddError && (
+                <div className="rounded-md bg-destructive/15 p-3 text-sm font-medium text-destructive">
+                  {quickAddError}
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label htmlFor="qa-name" className="text-xs font-medium text-muted-foreground">
+                  Name
+                </label>
+                <input
+                  id="qa-name"
+                  required
+                  autoFocus
+                  value={newCusName}
+                  onChange={(e) => setNewCusName(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="qa-phone" className="text-xs font-medium text-muted-foreground">
+                  Phone
+                </label>
+                <input
+                  id="qa-phone"
+                  required
+                  value={newCusPhone}
+                  onChange={(e) => setNewCusPhone(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="qa-nic" className="text-xs font-medium text-muted-foreground">
+                  NIC (recommended for credit)
+                </label>
+                <input
+                  id="qa-nic"
+                  value={newCusNic}
+                  onChange={(e) => setNewCusNic(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 p-4 border-t border-border">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsQuickAddOpen(false);
+                  setQuickAddError("");
+                }}
+                className="px-4 py-2 border border-input rounded-md text-sm hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={quickAddLoading}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-bold disabled:opacity-50 flex items-center gap-2"
+              >
+                {quickAddLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                {quickAddLoading ? "Saving..." : "Add & link"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showBatchPopup && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">

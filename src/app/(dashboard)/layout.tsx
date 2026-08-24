@@ -1,10 +1,6 @@
-import Link from "next/link";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import {
-  Settings,
-  Hammer,
-} from "lucide-react";
+import { Hammer } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
 import NavLinks from "@/components/nav/NavLinks";
 
@@ -41,17 +37,11 @@ export default async function DashboardLayout({
           <NavLinks role={role} />
         </nav>
 
-        {/* Bottom actions — Settings (Admin only) + Sign Out */}
+        {/* Bottom actions.
+            The Settings link was removed: it pointed at /settings, which does
+            not exist, so it 404'd for every admin who clicked it. Restore it
+            when the settings page is actually built. */}
         <div className="border-t border-border p-3 space-y-1">
-          {role === "ADMIN" && (
-            <Link
-              href="/settings"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-gray-400 hover:text-accent-foreground"
-            >
-              <Settings className="h-4 w-4" />
-              Settings
-            </Link>
-          )}
           <LogoutButton />
         </div>
       </aside>

@@ -1,69 +1,95 @@
-import { NextResponse } from "next/server";
+import { PaymentMethod, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { badRequest, notFound, ok, parseBody, route } from "@/lib/api";
+import { requireManager } from "@/lib/authz";
+import { settleSupplierSchema } from "@/lib/validation";
+import { syncPurchaseOrderPaymentState } from "@/lib/ledger";
+import { dec } from "@/lib/inventory";
 
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const { supplierId, amount } = body;
-    
-    let remainingCash = Number(amount);
+/**
+ * POST /api/suppliers/settle — pay a supplier against outstanding deliveries.
+ *
+ * Oldest order first, amount owed read from the supplier payment ledger, and
+ * the order's cached totals re-derived after each payment.
+ */
+export const POST = route("POST /api/suppliers/settle", async (req) => {
+  // Authorization first: an unauthenticated caller must never reach validation,
+  // or the error it gets back tells them about the request shape.
+  await requireManager();
+  const body = await parseBody(req, settleSupplierSchema);
 
-    if (!supplierId || remainingCash <= 0) {
-      return NextResponse.json({ error: "Invalid payment data" }, { status: 400 });
-    }
+  const supplier = await prisma.supplier.findUnique({
+    where: { id: body.supplierId },
+    select: { id: true, name: true },
+  });
 
-    await prisma.$transaction(async (tx) => {
-      // 1. Fetch all unpaid Purchase Orders for this supplier, oldest first
-      const unpaidOrders = await tx.purchaseOrder.findMany({
-        where: {
-          supplierId: supplierId,
-          paymentStatus: { in: ["UNPAID", "PARTIAL"] }
-        },
-        include: { supplierPayments: true }, // Pull the exact ledger
-        orderBy: { createdAt: 'asc' }
+  if (!supplier) throw notFound("Supplier not found.");
+
+  const result = await prisma.$transaction(async (tx) => {
+    const orders = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "PurchaseOrder"
+       WHERE "supplierId" = ${supplier.id}
+         AND "status" <> 'CANCELLED'
+       ORDER BY "createdAt" ASC
+       FOR UPDATE
+    `;
+
+    let remaining = dec(body.amount);
+    let applied = dec(0);
+    let count = 0;
+
+    for (const { id } of orders) {
+      if (remaining.lte(0)) break;
+
+      const order = await tx.purchaseOrder.findUniqueOrThrow({
+        where: { id },
+        select: { id: true, totalAmount: true },
       });
 
-      for (const order of unpaidOrders) {
-        if (remainingCash <= 0) break; 
+      const paidSoFar =
+        (
+          await tx.supplierPayment.aggregate({
+            where: { purchaseOrderId: id },
+            _sum: { amount: true },
+          })
+        )._sum.amount ?? new Prisma.Decimal(0);
 
-        const orderTotal = Number(order.totalAmount);
-        
-        // Calculate exact debt ignoring text status
-        const paidSoFar = order.supplierPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-        const debtOnThisOrder = orderTotal - paidSoFar;
+      const owed = order.totalAmount.minus(paidSoFar);
+      if (owed.lte(0)) continue;
 
-        if (debtOnThisOrder > 0) {
-          const amountToApply = Math.min(remainingCash, debtOnThisOrder);
-          const newAmountPaid = paidSoFar + amountToApply;
-          const newStatus = newAmountPaid >= orderTotal ? "PAID" : "PARTIAL";
+      const amount = Prisma.Decimal.min(remaining, owed);
 
-          // 2. Update the Purchase Order
-          await tx.purchaseOrder.update({
-            where: { id: order.id },
-            data: {
-              amountPaid: newAmountPaid,
-              paymentStatus: newStatus
-            } as any 
-          });
+      await tx.supplierPayment.create({
+        data: {
+          purchaseOrderId: id,
+          supplierId: supplier.id,
+          amount,
+          method: PaymentMethod.CASH,
+        },
+      });
 
-          // 3. Log the permanent Outgoing Payment Record
-          await tx.supplierPayment.create({
-            data: {
-              purchaseOrderId: order.id,
-              supplierId: supplierId,
-              amount: amountToApply,
-              method: "CASH"
-            }
-          });
+      await syncPurchaseOrderPaymentState(tx, id);
 
-          remainingCash -= amountToApply;
-        }
-      }
-    });
+      remaining = remaining.minus(amount);
+      applied = applied.plus(amount);
+      count += 1;
+    }
 
-    return NextResponse.json({ success: true, message: "Payment to supplier successfully recorded." });
-  } catch (error: any) {
-    console.error("SUPPLIER SETTLEMENT ERROR:", error);
-    return NextResponse.json({ error: "Failed to process supplier payment" }, { status: 500 });
-  }
-}
+    if (applied.isZero()) {
+      throw badRequest(`Nothing is currently owed to ${supplier.name}.`);
+    }
+
+    return { applied, unapplied: remaining, ordersSettled: count };
+  });
+
+  return ok({
+    applied: Number(result.applied),
+    unapplied: Number(result.unapplied),
+    ordersSettled: result.ordersSettled,
+    message: result.unapplied.gt(0)
+      ? `Paid Rs. ${result.applied.toFixed(2)}. Rs. ${result.unapplied.toFixed(
+          2
+        )} exceeded the outstanding balance and was not recorded.`
+      : `Paid Rs. ${result.applied.toFixed(2)} across ${result.ordersSettled} order(s).`,
+  });
+});

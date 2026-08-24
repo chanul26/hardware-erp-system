@@ -3,14 +3,16 @@
 import { useState } from "react";
 
 import AddItemForm from "./AddItemForm";
-import InventoryTable from "./InventoryTable";
+import InventoryTable, { type Item } from "./InventoryTable";
 
 type Props = {
-  items?: any[];
+  items?: Item[];
+  purposes: string[];
 };
 
 export default function InventoryClient({
   items = [],
+  purposes,
 }: Props) {
 
   const [showForm, setShowForm] =
@@ -111,7 +113,7 @@ export default function InventoryClient({
 
       {/* INVENTORY TABLE */}
 
-      <InventoryTable items={items} />
+      <InventoryTable items={items} purposes={purposes} />
 
     </div>
   );

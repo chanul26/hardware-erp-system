@@ -15,12 +15,22 @@ export default function SuppliersPage() {
   const [isSettling, setIsSettling] = useState(false);
   const [message, setMessage] = useState<{type: "success"|"error", text: string} | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadSuppliers = async () => {
     setLoading(true);
-    const res = await fetch("/api/suppliers", { cache: "no-store" });
-    const json = await res.json();
-    if (json.success) setSuppliers(json.data);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/suppliers", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not load suppliers.");
+      setSuppliers(json.data);
+    } catch (err) {
+      setSuppliers([]);
+      setLoadError(err instanceof Error ? err.message : "Could not load suppliers.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -41,14 +51,16 @@ export default function SuppliersPage() {
       })
     });
 
+    const json = await res.json();
+
     if (res.ok) {
       setSettleOpen(false);
       setSettleAmount("");
-      setMessage({ type: "success", text: `Successfully logged Rs. ${settleAmount} payment to ${selectedSupplier.name}` });
-      loadSuppliers(); 
-      setTimeout(() => setMessage(null), 4000);
+      setMessage({ type: "success", text: json.data.message });
+      loadSuppliers();
+      setTimeout(() => setMessage(null), 6000);
     } else {
-      setMessage({ type: "error", text: "Failed to process payment." });
+      setMessage({ type: "error", text: json.error || "Failed to process payment." });
     }
     setIsSettling(false);
   };
@@ -91,6 +103,18 @@ export default function SuppliersPage() {
               {loading ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary"/></td>
+                </tr>
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center">
+                    <p className="text-destructive font-medium">{loadError}</p>
+                    <button
+                      onClick={loadSuppliers}
+                      className="mt-3 border border-input px-4 py-1.5 rounded-md text-sm hover:bg-muted"
+                    >
+                      Try again
+                    </button>
+                  </td>
                 </tr>
               ) : suppliers.length === 0 ? (
                 <tr>

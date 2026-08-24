@@ -44,16 +44,27 @@ export default function CustomersPage() {
     setTimeout(() => setToast(null), 2500);
   };
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadCustomers = async () => {
     setLoading(true);
-    const res = await fetch(
-      `/api/customers?search=${search}&page=${page}&limit=${limit}`,
-      { cache: "no-store" }
-    );
-    const data = await res.json();
-    setCustomers(data.customers);
-    setTotal(data.total);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const res = await fetch(
+        `/api/customers?search=${encodeURIComponent(search)}&page=${page}&limit=${limit}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not load customers.");
+      setCustomers(json.data.customers);
+      setTotal(json.data.total);
+    } catch (err) {
+      setCustomers([]);
+      setTotal(0);
+      setLoadError(err instanceof Error ? err.message : "Could not load customers.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -86,13 +97,17 @@ export default function CustomersPage() {
       })
     });
 
+    const json = await res.json();
+
     if (res.ok) {
-      showToast(`Successfully received Rs. ${settleAmount}`);
+      // The server reports what it actually applied — it will not record more
+      // than is owed, so this can differ from what was typed.
+      showToast(json.data.message);
       setSettleOpen(false);
       setSettleAmount("");
-      loadCustomers(); // Instantly refreshes the debt column!
+      loadCustomers();
     } else {
-      showToast("Failed to process payment");
+      showToast(json.error || "Failed to process payment");
     }
     setIsSettling(false);
   };
@@ -107,8 +122,9 @@ export default function CustomersPage() {
 
     const res = await fetch("/api/customers", {
       method,
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        id: editId,
+        ...(editId ? { id: editId } : {}),
         name,
         nic,
         email,
@@ -124,21 +140,35 @@ export default function CustomersPage() {
       resetForm();
       loadCustomers();
     } else {
-      showToast(data.error || "Error");
+      // Surface per-field validation messages rather than a bare "Error".
+      const detail = data.details
+        ? Object.values(data.details as Record<string, string[]>)
+            .flat()
+            .join(" ")
+        : "";
+      showToast(detail || data.error || "Could not save the customer.");
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const confirmDelete = confirm(
-      "Are you sure? This will permanently delete the customer."
-    );
-    if (!confirmDelete) return;
+  const handleDelete = async (id: string, name: string) => {
+    // Customers with billing history are archived, not deleted — removing them
+    // outright would orphan their bills and erase the debt trail.
+    if (
+      !confirm(
+        `Remove ${name}?\n\nIf they have any billing history the record is archived instead of deleted, so invoices and payments stay intact.`
+      )
+    )
+      return;
 
-    await fetch(`/api/customers?id=${id}`, {
-      method: "DELETE",
-    });
+    const res = await fetch(`/api/customers?id=${id}`, { method: "DELETE" });
+    const json = await res.json();
 
-    showToast("Deleted successfully");
+    if (!res.ok) {
+      showToast(json.error || "Could not remove the customer.");
+      return;
+    }
+
+    showToast(json.data.archived ? `${json.data.name} archived` : "Deleted successfully");
     loadCustomers();
   };
 
@@ -190,7 +220,25 @@ export default function CustomersPage() {
         </thead>
 
         <tbody>
-          {customers.length === 0 ? (
+          {loading ? (
+            <tr>
+              <td colSpan={7} className="text-center p-4 text-gray-500">
+                Loading customers…
+              </td>
+            </tr>
+          ) : loadError ? (
+            <tr>
+              <td colSpan={7} className="text-center p-4">
+                <p className="text-red-600 font-medium">{loadError}</p>
+                <button
+                  onClick={loadCustomers}
+                  className="mt-2 border px-3 py-1 rounded text-sm hover:bg-gray-50"
+                >
+                  Try again
+                </button>
+              </td>
+            </tr>
+          ) : customers.length === 0 ? (
             <tr>
               <td colSpan={7} className="text-center p-4">
                 No customers found
@@ -229,10 +277,10 @@ export default function CustomersPage() {
                   )}
 
                   <button
-                    onClick={() => handleDelete(c.id)}
+                    onClick={() => handleDelete(c.id, c.name)}
                     className="bg-red-500 text-white px-2 py-1 rounded"
                   >
-                    🗑 Delete
+                    🗑 Remove
                   </button>
                 </td>
               </tr>

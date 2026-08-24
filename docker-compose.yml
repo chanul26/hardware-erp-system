@@ -1,35 +1,50 @@
+# Local development stack.
+#
+# Secrets come from .env (gitignored) — nothing sensitive is hardcoded here.
+# See docker-compose.prod.yml for the deployment variant, which does not
+# publish the database port.
+
 services:
   db:
     image: postgres:16-alpine
     container_name: hardware_erp_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: erp_user
-      POSTGRES_PASSWORD: erp_password
-      POSTGRES_DB: hardware_erp
+      POSTGRES_USER: ${POSTGRES_USER:-erp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hardware_erp}
     ports:
-      - "5433:5432"
+      # Bound to loopback only: reachable from this machine's tooling, not from
+      # the network. Publishing 0.0.0.0:5433 would expose the database to
+      # anything that can route to this host.
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U erp_user -d hardware_erp"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-erp_user} -d ${POSTGRES_DB:-hardware_erp}",
+        ]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: hardware_erp_app
-    restart: always
+    restart: unless-stopped
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     environment:
-      # Use the service name 'db' as the hostname
-      DATABASE_URL: "postgresql://erp_user:erp_password@db:5432/hardware_erp?schema=public"
-      NEXTAUTH_SECRET: "super-secret-12345"
-      NEXTAUTH_URL: "http://localhost:3001"
+      # Inside the compose network the database is reachable by service name.
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-erp_user}:${POSTGRES_PASSWORD:-erp_password}@db:5432/${POSTGRES_DB:-hardware_erp}?schema=public"
+      DIRECT_URL: "postgresql://${POSTGRES_USER:-erp_user}:${POSTGRES_PASSWORD:-erp_password}@db:5432/${POSTGRES_DB:-hardware_erp}?schema=public"
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required — set it in .env}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+      NODE_ENV: production
     depends_on:
       db:
         condition: service_healthy

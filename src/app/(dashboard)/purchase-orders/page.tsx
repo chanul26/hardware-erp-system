@@ -1,9 +1,8 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import RestockForm from "./RestockForm";
 
 export const dynamic = "force-dynamic";
 
-const prisma = new PrismaClient();
 
 export default async function PurchaseOrdersPage() {
   // Securely fetch data on the server before the page even loads

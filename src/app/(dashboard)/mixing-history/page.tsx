@@ -1,11 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 
 export const dynamic =
   "force-dynamic";
 
-const prisma =
-  new PrismaClient();
 
 type Props = {
   searchParams: Promise<{
@@ -314,7 +312,7 @@ export default async function MixingHistoryPage({
 
                 <td className="p-4 text-center font-bold text-orange-600">
                   {Math.abs(
-                    movement.quantity
+                    Number(movement.quantity)
                   )} {movement.item.unit}
                 </td>
 
