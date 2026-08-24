@@ -120,10 +120,36 @@ export const authOptions: AuthOptions = {
       return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id;
-        session.user.role = token.role;
+      if (!session.user) return session;
+
+      // A JWT carries the user id it was signed with and is never re-checked
+      // against the database, so a token outlives the row it points at — after
+      // a database reset, or when a member of staff is deleted. Routes then
+      // write that dangling id and Postgres rejects it on a foreign key, which
+      // surfaces to the user as an unexplained save failure.
+      //
+      // Confirming the user still exists turns that into an ordinary
+      // signed-out state: the stale token is refused and the login page asks
+      // for credentials again.
+      const current = await prisma.user.findUnique({
+        where: { id: token.id },
+        select: { id: true, role: true },
+      });
+
+      if (!current) {
+        // Null, rather than a session with the user stripped out: every route
+        // here guards with `if (!session)` and then reaches straight for
+        // `session.user.role`, so a user-less session object would turn a
+        // stale token into a crash instead of a redirect to the login page.
+        return null as unknown as typeof session;
       }
+
+      session.user.id = current.id;
+
+      // Read the role from the row rather than the token, so a change of role
+      // takes effect on the next request instead of at the next sign-in.
+      session.user.role = current.role;
+
       return session;
     },
   },

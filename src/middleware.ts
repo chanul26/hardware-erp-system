@@ -89,6 +89,17 @@ export default withAuth(
 
 export const config = {
   matcher: [
+    "/dashboard/:path*", 
+    "/users/:path*", 
+    "/reports/:path*", 
+    "/inventory/:path*", 
+    "/purchase-orders/:path*", 
+    "/suppliers/:path*", 
+    "/payments/:path*", 
+    "/customers/:path*",
+    "/billing/:path*",
+    "/warranty/:path*",
+    "/"
     /**
      * Everything except Next internals, static assets, the NextAuth endpoints
      * and the health probe. Written as an exclusion so a new page or API route

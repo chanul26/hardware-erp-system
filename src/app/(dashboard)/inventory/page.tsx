@@ -22,6 +22,9 @@ export default async function InventoryPage() {
         reorderLevel: true,
         buyingPrice: true,
         sellingPrice: true,
+        warrantyEligible: true,
+        defaultWarrantyMonths: true,
+        requiresSerial: true,
       },
     }),
 

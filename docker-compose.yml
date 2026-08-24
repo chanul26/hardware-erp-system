@@ -10,6 +10,12 @@ services:
     container_name: hardware_erp_db
     restart: unless-stopped
     environment:
+      POSTGRES_USER: erp_user
+      POSTGRES_PASSWORD: erp_password
+      POSTGRES_DB: hardware_erp
+      # Timestamps are stored in UTC either way; this keeps anything read
+      # directly from psql in the same day as the application shows.
+      TZ: Asia/Colombo
       POSTGRES_USER: ${POSTGRES_USER:-erp_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_password}
       POSTGRES_DB: ${POSTGRES_DB:-hardware_erp}

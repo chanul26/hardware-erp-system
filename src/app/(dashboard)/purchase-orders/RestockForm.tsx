@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Calculator, Barcode, X, Package, Search, Plus, Loader2, ShoppingCart, Trash2 } from "lucide-react";
+import { Calculator, Barcode, X, Package, Search, Plus, Loader2, ShoppingCart, Trash2, ShieldCheck } from "lucide-react";
 
 export default function RestockForm({ suppliers, items: initialItems }: { suppliers: any[], items: any[] }) {
   const router = useRouter();
@@ -16,6 +16,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
 
   // PAYMENT STATES
   const [paymentMethod, setPaymentMethod] = useState("CASH");
+  const [drawerAmount, setDrawerAmount] = useState("");
   const [cashAmount, setCashAmount] = useState("");
   const [chequeNumber, setChequeNumber] = useState("");
   const [bankName, setBankName] = useState("");
@@ -34,7 +35,12 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   const [stagedQuantity, setStagedQuantity] = useState("");
   const [stagedUnitCost, setStagedUnitCost] = useState("");
   const [stagedSellingPrice, setStagedSellingPrice] = useState("");
-  
+
+  // Warranty terms the supplier gave for THIS shipment. Only meaningful for
+  // warranty-eligible products; blank means the goods came with no cover.
+  const [stagedWarrantyMonths, setStagedWarrantyMonths] = useState("");
+  const [stagedWarrantyRef, setStagedWarrantyRef] = useState("");
+
   // "Unknown Barcode" Modal State
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   const [newItemBarcode, setNewItemBarcode] = useState("");
@@ -80,6 +86,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     setBankName("");
     setChequeDate("");
     setPaymentMethod("CASH");
+    setDrawerAmount("");
     
     // Nuke the local storage drafts
     localStorage.removeItem("erp_po_cart");
@@ -93,6 +100,16 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   // CHEQUE AMOUNT
   const chequeAmount = paymentMethod === "CHEQUE" ? totalBillAmount : totalBillAmount - Number(cashAmount || 0);
 
+  // The part of this bill being settled in notes — the whole bill when paying
+  // cash, or just the cash leg of a mixed payment. The drawer can only have
+  // funded some of this, never more.
+  const cashPortion =
+    paymentMethod === "CASH"
+      ? totalBillAmount
+      : paymentMethod === "MIXED"
+      ? Number(cashAmount || 0)
+      : 0;
+
   // ─── SCANNER LOGIC ────────────────────────────────────────────────────────
   const handleScannerInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -105,6 +122,10 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
       if (foundItem) {
         setStagedItem(foundItem);
         setStagedSellingPrice(String(foundItem.sellingPrice || ""));
+        setStagedWarrantyMonths(
+          foundItem.warrantyEligible ? String(foundItem.defaultWarrantyMonths ?? "") : ""
+        );
+        setStagedWarrantyRef("");
         setSearchInput("");
         setTimeout(() => quantityInputRef.current?.focus(), 100);
       } else {
@@ -117,6 +138,10 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
   const handleManualSelect = (item: any) => {
     setStagedItem(item);
     setStagedSellingPrice(String(item.sellingPrice || ""));
+    setStagedWarrantyMonths(
+      item.warrantyEligible ? String(item.defaultWarrantyMonths ?? "") : ""
+    );
+    setStagedWarrantyRef("");
     setSearchInput("");
     setTimeout(() => quantityInputRef.current?.focus(), 100);
   };
@@ -131,6 +156,11 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     const cost = Number(stagedUnitCost);
     const selling = Number(stagedSellingPrice);
 
+    const warrantyMonths =
+      stagedItem.warrantyEligible && Number(stagedWarrantyMonths) > 0
+        ? Number(stagedWarrantyMonths)
+        : null;
+
     setDeliveryCart([
       ...deliveryCart,
       {
@@ -141,6 +171,9 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
         unitCost: cost,
         sellingPrice: selling,
         totalCost: qty * cost,
+        warrantyEligible: !!stagedItem.warrantyEligible,
+        warrantyMonths,
+        supplierWarrantyRef: warrantyMonths ? stagedWarrantyRef.trim() || null : null,
       },
     ]);
 
@@ -148,6 +181,8 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
     setStagedQuantity("");
     setStagedUnitCost("");
     setStagedSellingPrice("");
+    setStagedWarrantyMonths("");
+    setStagedWarrantyRef("");
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
     
@@ -255,8 +290,11 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
             quantity: item.quantity,
             unitCost: item.unitCost,
             sellingPrice: Number(item.sellingPrice || 0),
+            warrantyMonths: item.warrantyMonths ?? null,
+            supplierWarrantyRef: item.supplierWarrantyRef ?? null,
           })),
           paymentMethod,
+          drawerAmount: Math.min(Number(drawerAmount) || 0, cashPortion),
           amountPaid:
             paymentMethod === "CASH"
               ? Number(cashAmount || totalBillAmount)
@@ -426,10 +464,53 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                 <Plus className="h-5 w-5" />
               </button>
             </div>
-            
+
           </div>
+
+          {/* ── SUPPLIER WARRANTY (eligible products only) ── */}
+          {stagedItem?.warrantyEligible && (
+            <div className="mt-4 pt-4 border-t border-blue-200">
+              <h4 className="text-xs font-bold text-blue-900 mb-2 flex items-center gap-2">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Supplier Warranty for this shipment
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div>
+                  <label className="block text-xs font-medium text-blue-800 mb-1">
+                    Warranty Period (months)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={stagedWarrantyMonths}
+                    onChange={(e) => setStagedWarrantyMonths(e.target.value)}
+                    className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 text-sm"
+                    placeholder="e.g. 12 — leave blank for none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-blue-800 mb-1">
+                    Supplier Warranty Ref
+                  </label>
+                  <input
+                    type="text"
+                    value={stagedWarrantyRef}
+                    onChange={(e) => setStagedWarrantyRef(e.target.value)}
+                    disabled={!(Number(stagedWarrantyMonths) > 0)}
+                    className="w-full border border-blue-300 rounded-md p-2 h-10 focus:ring-blue-500 disabled:opacity-50 text-sm"
+                    placeholder="Warranty card / invoice ref"
+                  />
+                </div>
+                <p className="text-[11px] text-blue-700 leading-snug pb-2">
+                  Leave blank if the supplier gave no warranty on this delivery — you
+                  will not be able to issue one to customers from this stock.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
-       
+
         {/* ── THE DELIVERY CART TABLE ── */}
         <div className="border border-gray-200 rounded-lg overflow-hidden mb-6">
           <table className="w-full text-sm text-left">
@@ -440,6 +521,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                 <th className="px-4 py-3 font-medium text-center">Qty</th>
                 <th className="px-4 py-3 font-medium text-right">  Buying</th>
                 <th className="px-4 py-3 font-medium text-right">  Selling</th>
+                <th className="px-4 py-3 font-medium text-center">Warranty</th>
                 <th className="px-4 py-3 font-medium text-right">  Total Cost</th>
                 <th className="px-4 py-3 text-center"></th>
               </tr>
@@ -447,7 +529,7 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
             <tbody className="divide-y divide-gray-100">
               {deliveryCart.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                     <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-20" />
                     No items added to this shipment yet. Scan an item above.
                   </td>
@@ -460,6 +542,16 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                     <td className="px-4 py-3 text-center font-bold">{item.quantity}</td>
                     <td className="px-4 py-3 text-right"> Rs. {item.unitCost.toFixed(2)}</td>
                     <td className="px-4 py-3 text-right font-semibold text-green-700"> Rs. {item.sellingPrice.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-center">
+                      {item.warrantyMonths ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                          <ShieldCheck className="h-3 w-3" />
+                          {item.warrantyMonths} mo
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right font-bold text-blue-700"> Rs. {item.totalCost.toFixed(2)}</td>
                     <td className="px-4 py-3 text-center">
                       <button type="button" onClick={() => removeFromCart(idx)} className="text-red-500 hover:text-red-700">
@@ -496,6 +588,71 @@ export default function RestockForm({ suppliers, items: initialItems }: { suppli
                 <option value="MIXED">Cash + Cheque</option>
               </select>
             </div>
+
+            {/* Cash paid to a supplier usually comes from the owner's wallet,
+                not the shop till — and often from both at once. Only the
+                drawer's share reduces cash in hand on the Money page. */}
+            {(paymentMethod === "CASH" || paymentMethod === "MIXED") && (
+              <div className="rounded-md border border-gray-300 bg-gray-50 p-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  How much of this came out of the shop drawer?
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    max={cashPortion}
+                    value={drawerAmount}
+                    onChange={(e) => setDrawerAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-36 border border-gray-300 rounded-md p-2"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setDrawerAmount(String(cashPortion))}
+                    className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    All of it
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDrawerAmount("")}
+                    className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    None
+                  </button>
+                </div>
+
+                <p className="mt-2 text-xs text-gray-500">
+                  {Number(drawerAmount) > 0 ? (
+                    <>
+                      Rs. {Number(drawerAmount).toFixed(2)} from the drawer
+                      {cashPortion - Number(drawerAmount) > 0 && (
+                        <>
+                          , Rs.{" "}
+                          {(cashPortion - Number(drawerAmount)).toFixed(2)} from
+                          your wallet or bank
+                        </>
+                      )}
+                      .
+                    </>
+                  ) : (
+                    "Leave at zero if none of it came from the till — that is the usual case."
+                  )}
+                </p>
+
+                {Number(drawerAmount) > cashPortion && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    That is more than the Rs. {cashPortion.toFixed(2)} being
+                    paid in cash.
+                  </p>
+                )}
+              </div>
+            )}
 
             {paymentMethod === "MIXED" && (
               <div>

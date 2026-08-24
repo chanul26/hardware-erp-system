@@ -12,6 +12,8 @@ import {
   CreditCard,
   BarChart3,
   Shield,
+  ShieldCheck,
+  PiggyBank,
 } from "lucide-react";
 
 const allNavItems = [
@@ -19,9 +21,11 @@ const allNavItems = [
   { label: "Inventory", href: "/inventory", icon: Package },
   { label: "Billing", href: "/billing", icon: Receipt },
   { label: "Customers", href: "/customers", icon: Users },
+  { label: "Warranty", href: "/warranty", icon: ShieldCheck },
   { label: "Suppliers", href: "/suppliers", icon: Truck },
   { label: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart },
   { label: "Payments", href: "/payments", icon: CreditCard },
+  { label: "Money", href: "/money", icon: PiggyBank },
   { label: "Reports", href: "/reports", icon: BarChart3 },
   { label: "Staff Management", href: "/users", icon: Shield },
 ];
@@ -34,9 +38,13 @@ export default function NavLinks({ role }: { role: Role }) {
   const navItems = allNavItems.filter((item) => {
     if (role === "ADMIN") return true;
     if (role === "MANAGER")
-      return !["Dashboard", "Reports", "Staff Management"].includes(item.label);
+      // Money is the owner's own books, so it stays off the manager's sidebar
+      // as well as behind the ADMIN check on the page itself.
+      return !["Dashboard", "Reports", "Staff Management", "Money"].includes(
+        item.label
+      );
     if (role === "CASHIER")
-      return ["Billing", "Customers"].includes(item.label);
+      return ["Billing", "Customers", "Warranty"].includes(item.label);
     return false;
   });
 
